@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.venv/
+build/
+dist/
+
+# Node / Electron (M4)
+node_modules/
+app/out/
+app/release/
+
+# Project files and caches created while testing
+*.mcsync
+*.mcsync-wal
+*.mcsync-shm
+.mcsync-cache/
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
