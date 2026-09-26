@@ -3,6 +3,10 @@
   "productName": "Multicam Sync",
   "version": "0.1.0",
   "description": "Automatic synchronisation of multicamera video and external audio",
+  "author": {
+    "name": "Multicam Sync contributors"
+  },
+  "homepage": "https://github.com/ZABRONMGAYA/ZABRONMGAYA",
   "private": true,
   "main": "dist-electron/main.js",
   "type": "module",
@@ -14,7 +18,9 @@
     "test": "vitest run",
     "e2e": "playwright test",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "dist": "npm run build && electron-builder --publish never",
+    "icon": "node scripts/render-icon.mjs"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0",
@@ -23,6 +29,7 @@
     "@types/react-dom": "19.3.0",
     "@vitejs/plugin-react": "6.1.1",
     "electron": "44.4.5",
+    "electron-builder": "26.15.3",
     "esbuild": "0.28.2",
     "jsdom": "30.1.1",
     "prettier": "3.8.1",

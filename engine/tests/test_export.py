@@ -453,5 +453,9 @@ def test_export_writes_atomically_and_reports(wedding, tmp_path):
     assert out.read_text(encoding="utf-8").startswith('<?xml version="1.0"')
     assert report["path"] == str(out) and report["format"] == "fcpxml" and len(report["clips"]) == 7
     assert [p.name for p in out.parent.iterdir()] == ["wedding.fcpxml"]  # no temporary files left behind
+    if os.name == "posix":  # readable like any document, not private like a temporary file
+        umask = os.umask(0)
+        os.umask(umask)
+        assert out.stat().st_mode & 0o777 == 0o666 & ~umask
     with pytest.raises(ExportError, match="unknown export format"):
         export_timeline(*wedding, "edl", tmp_path / "x.edl")

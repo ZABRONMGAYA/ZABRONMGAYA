@@ -87,12 +87,13 @@ def cmd_sync(args: argparse.Namespace) -> int:
             print(f"sync failed: {job.error}", file=sys.stderr)
             return 1
         result = job.result
+        report = _export(service, args.export, args) if args.export else None
         if args.json:
-            print(json.dumps(result, indent=2))
-        else:
-            _print_timeline(result)
-        if args.export:
-            _print_export(_export(service, args.export, args))
+            print(json.dumps(result | ({"export": report} if report else {}), indent=2))
+            return 0
+        _print_timeline(result)
+        if report:
+            _print_export(report)
         return 0
     finally:
         service.close()

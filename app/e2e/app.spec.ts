@@ -27,9 +27,12 @@ let page: Page;
 
 test.describe.configure({ mode: "serial" });
 
+/** MCSYNC_E2E_APP: run against a packaged app (its executable) instead of the development build. */
+const packagedApp = process.env.MCSYNC_E2E_APP;
+
 async function launch(): Promise<void> {
   app = await electron.launch({
-    args: [appDir],
+    ...(packagedApp ? { executablePath: packagedApp } : { args: [appDir] }),
     env: {
       ...process.env,
       MCSYNC_NO_SANDBOX: "1",
@@ -90,6 +93,8 @@ test("starts on the welcome screen with the engine ready", async () => {
   await expect(page.getByTestId("welcome")).toBeVisible();
   await expect(page.getByTestId("new-project")).toBeEnabled();
   await expect(page.getByTestId("statusbar")).toContainText("FFmpeg");
+  // A packaged app runs its own engine with its own FFmpeg (engine/packaging/build_ffmpeg.sh).
+  if (packagedApp) await expect(page.getByTestId("statusbar")).toContainText(/FFmpeg n\d/);
   await shot("01-welcome");
 });
 

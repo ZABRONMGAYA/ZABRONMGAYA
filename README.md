@@ -23,6 +23,18 @@ audio, dozens of interrupted camera clips, mixed frame rates, drifting clocks.
 | M5 XML export (Resolve, Premiere) | ✅ [engine/src/mcsync/export](engine/src/mcsync/export) (NLE imports still to validate) |
 | M6 Hardening, packaging, installers | next |
 
+## Installing
+
+Installers for Windows (64-bit) and macOS (Apple Silicon and Intel) are built by the
+[release workflow](.github/workflows/release.yml). Download them from the repository's Releases page, or from the
+workflow run's artifacts.
+
+The builds are not signed with a paid certificate yet, so the system asks once before the first launch:
+
+* **Windows:** "Windows protected your PC" → **More info** → **Run anyway**.
+* **macOS:** open the DMG and drag Multicam Sync to Applications. The first launch is blocked: open
+  **System Settings → Privacy & Security** and click **Open Anyway**.
+
 ## Documentation
 
 * [Architecture](docs/ARCHITECTURE.md): processes, key decisions, module layout, IPC contract, repository structure.
@@ -74,4 +86,16 @@ npm run dev                               # or: hot-reloading renderer
 
 npm run typecheck && npm test             # unit tests
 npm run build && npm run e2e              # the real app end to end (see app/e2e/README.md)
+```
+
+## Building the installers
+
+Each installer is built on its own platform (what the release workflow does):
+
+```bash
+engine/packaging/build_ffmpeg.sh engine/dist/ffmpeg   # pinned, decode-only LGPL FFmpeg (needs nasm)
+engine/packaging/build_engine.sh                      # frozen engine in engine/dist/mcsync-engine
+cd app && npm ci && npm run build
+npx electron-builder --win nsis --x64                 # or: --mac dmg --arm64 / --x64
+MCSYNC_E2E_APP="release/win-unpacked/Multicam Sync.exe" npx playwright test e2e/app.spec.ts
 ```

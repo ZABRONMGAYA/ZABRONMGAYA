@@ -1,0 +1,48 @@
+# Installers: Windows (NSIS, x64) and macOS (DMG, arm64 and x64), built by .github/workflows/release.yml.
+# The engine (PyInstaller, engine/packaging/build_engine.sh) and FFmpeg (engine/packaging/build_ffmpeg.sh) must be
+# built first, on the platform and architecture of the installer.
+appId: app.multicamsync.desktop
+productName: Multicam Sync
+copyright: Copyright © 2026 Multicam Sync contributors
+directories:
+  output: release
+  buildResources: build
+files:
+  - dist/**
+  - dist-electron/**
+  - "!**/*.map"
+  - package.json
+extraResources:
+  - from: ../engine/dist/mcsync-engine
+    to: engine
+  - from: ../engine/dist/ffmpeg
+    to: ffmpeg
+npmRebuild: false
+publish: null # no auto-update feed
+electronLanguages: [en-US, en-GB, de, fr, es, it, pt-BR, nl, ja, zh-CN]
+
+mac:
+  target: dmg
+  category: public.app-category.video
+  icon: build/icon.png
+  # Signed with a Developer ID when CSC_LINK is set; otherwise the release workflow passes -c.mac.identity=-
+  # (ad-hoc), which Apple Silicon needs to run the app at all.
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  minimumSystemVersion: "12.0"
+dmg:
+  artifactName: Multicam-Sync-${version}-macOS-${arch}.${ext}
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: build/icon.png
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  artifactName: Multicam-Sync-${version}-Windows-x64-Setup.${ext}

@@ -55,6 +55,10 @@ def _write_atomic(path: Path, text: str) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
             f.write(text)
+        # mkstemp makes the file private; an export is an ordinary document (and editors share workstations).
+        umask = os.umask(0)
+        os.umask(umask)
+        os.chmod(tmp, 0o666 & ~umask)
         os.replace(tmp, path)
     except BaseException:
         Path(tmp).unlink(missing_ok=True)

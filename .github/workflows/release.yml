@@ -1,0 +1,191 @@
+name: release
+
+# Builds the installers on each platform: Windows x64 (NSIS), macOS Apple Silicon and Intel (DMG).
+# Every build is tested before upload: the end-to-end suite runs against the packaged app, with its bundled
+# engine and FFmpeg. Tags (v*) and manual runs also collect the installers into a draft GitHub release.
+#
+# Optional signing (repository secrets): CSC_LINK + CSC_KEY_PASSWORD (a .p12 Developer ID or Windows code-signing
+# certificate, base64), and for macOS notarization APPLE_ID + APPLE_APP_SPECIFIC_PASSWORD + APPLE_TEAM_ID.
+# Without them, macOS builds are ad-hoc signed and Windows builds are unsigned.
+
+on:
+  push:
+    tags: ["v*"] # tags build and release whatever changed
+    branches: ["**"] # branches build only when packaging changes
+    paths:
+      - ".github/workflows/release.yml"
+      - "engine/packaging/**"
+      - "app/electron-builder.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows-x64
+            os: windows-latest
+          - name: macos-arm64
+            os: macos-latest
+            arch: arm64
+          - name: macos-x64
+            os: macos-15-intel
+            arch: x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      # --- FFmpeg: one pinned, decode-only LGPL build (engine/packaging/build_ffmpeg.sh), cached per recipe
+      - name: Restore FFmpeg
+        id: ffmpeg
+        uses: actions/cache@v4
+        with:
+          path: engine/dist/ffmpeg
+          key: ffmpeg-${{ matrix.name }}-${{ hashFiles('engine/packaging/build_ffmpeg.sh') }}
+      - name: Set up MSYS2 (Windows FFmpeg build)
+        if: runner.os == 'Windows' && steps.ffmpeg.outputs.cache-hit != 'true'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            git make diffutils
+            mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-nasm mingw-w64-ucrt-x86_64-zlib
+      - name: Build FFmpeg (Windows)
+        if: runner.os == 'Windows' && steps.ffmpeg.outputs.cache-hit != 'true'
+        shell: msys2 {0}
+        run: engine/packaging/build_ffmpeg.sh engine/dist/ffmpeg
+      - name: Build FFmpeg (macOS)
+        if: runner.os == 'macOS' && steps.ffmpeg.outputs.cache-hit != 'true'
+        run: |
+          brew install nasm
+          engine/packaging/build_ffmpeg.sh engine/dist/ffmpeg
+
+      # --- engine: frozen with PyInstaller
+      - name: Build the engine
+        shell: bash
+        env:
+          PYTHON: python
+        run: engine/packaging/build_engine.sh
+
+      # --- app and installer
+      - name: Build the app
+        working-directory: app
+        run: |
+          npm ci
+          npm run build
+      - name: Build the installer
+        working-directory: app
+        shell: bash
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then
+            [ -n "$CSC_LINK" ] || unset CSC_LINK CSC_KEY_PASSWORD
+            npx electron-builder --win nsis --x64 --publish never
+          else
+            if [ -n "$CSC_LINK" ]; then
+              npx electron-builder --mac dmg --${{ matrix.arch }} --publish never
+            else
+              unset CSC_LINK CSC_KEY_PASSWORD
+              export CSC_IDENTITY_AUTO_DISCOVERY=false
+              npx electron-builder --mac dmg --${{ matrix.arch }} --publish never -c.mac.identity=-
+            fi
+          fi
+          ls -la release
+
+      # --- test the packaged app before shipping it
+      - name: Install FFmpeg with encoders (to generate test footage)
+        shell: bash
+        run: |
+          case "$RUNNER_OS" in
+            macOS) brew install ffmpeg ;;
+            Windows) choco install ffmpeg -y --no-progress ;;
+          esac
+      - name: End-to-end tests against the packaged app
+        working-directory: app
+        shell: bash
+        env:
+          MCSYNC_PYTHON: python
+        run: |
+          case "${{ matrix.name }}" in
+            windows-x64) export MCSYNC_E2E_APP="$PWD/release/win-unpacked/Multicam Sync.exe" ;;
+            macos-arm64) export MCSYNC_E2E_APP="$PWD/release/mac-arm64/Multicam Sync.app/Contents/MacOS/Multicam Sync" ;;
+            macos-x64) export MCSYNC_E2E_APP="$PWD/release/mac/Multicam Sync.app/Contents/MacOS/Multicam Sync" ;;
+          esac
+          npx playwright test e2e/app.spec.ts
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-${{ matrix.name }}
+          path: app/test-results/
+          if-no-files-found: ignore
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-${{ matrix.name }}
+          path: |
+            app/release/*.exe
+            app/release/*.dmg
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: installer-*
+          path: installers
+          merge-multiple: true
+      - name: Version
+        id: version
+        run: |
+          version=$(node -p "require('./app/package.json').version")
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then tag="$GITHUB_REF_NAME"; else tag="v$version-build.$GITHUB_RUN_NUMBER"; fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          tag_name: ${{ steps.version.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: Multicam Sync ${{ steps.version.outputs.version }} (${{ steps.version.outputs.tag }})
+          files: installers/*
+          body: |
+            Installers for Multicam Sync ${{ steps.version.outputs.version }}, built from ${{ github.sha }}.
+
+            | Computer | File |
+            |---|---|
+            | Windows 10/11 (64-bit) | `Multicam-Sync-${{ steps.version.outputs.version }}-Windows-x64-Setup.exe` |
+            | Mac with Apple Silicon (M1 and later) | `Multicam-Sync-${{ steps.version.outputs.version }}-macOS-arm64.dmg` |
+            | Mac with an Intel processor | `Multicam-Sync-${{ steps.version.outputs.version }}-macOS-x64.dmg` |
+
+            These builds are not signed with a paid certificate, so the system asks before the first launch:
+            * **Windows:** "Windows protected your PC" → **More info** → **Run anyway**.
+            * **macOS:** open the DMG and drag Multicam Sync to Applications. The first time it is blocked:
+              open **System Settings → Privacy & Security**, and click **Open Anyway** next to Multicam Sync.
