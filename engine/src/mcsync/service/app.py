@@ -543,10 +543,13 @@ def _claim_stdio() -> tuple[int, int]:
     matcher pool never started while the app waited for a sync to finish.
     """
     protocol_in, protocol_out = os.dup(0), os.dup(1)  # not inheritable (PEP 446)
-    null = os.open(os.devnull, os.O_RDONLY)
+    null = os.open(os.devnull, os.O_RDWR)
     os.dup2(null, 0)
+    try:
+        os.dup2(2, 1)
+    except OSError:  # started without stderr
+        os.dup2(null, 1)
     os.close(null)
-    os.dup2(2, 1)
     if sys.platform == "win32":  # what new processes get as their standard handles
         import ctypes
         import msvcrt
