@@ -33,6 +33,8 @@ function installBridge(handlers: Partial<Record<Method, Handler>>): unknown[][] 
     chooseMedia: async () => [],
     chooseProjectToOpen: async () => null,
     chooseProjectToCreate: async () => null,
+    chooseExportPath: async () => null,
+    showInFolder: async () => {},
     pathForFile: () => "",
     readPeaks: async () => new Uint8Array(),
     platform: "test",

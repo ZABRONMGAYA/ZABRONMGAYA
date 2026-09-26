@@ -177,6 +177,34 @@ test("rejects a wrong match from the inspector and restores it", async () => {
   await expect(page.getByTestId("reject-230614_001.WAV")).toBeVisible();
 });
 
+test("exports the timeline for Premiere Pro and Resolve", async () => {
+  for (const [format, file] of [
+    ["xmeml", "Smith.xml"],
+    ["fcpxml", "Smith.fcpxml"],
+  ] as const) {
+    const out = path.join(work, file);
+    await app.evaluate(({ dialog }, target) => {
+      dialog.showSaveDialog = (async () => ({ canceled: false, filePath: target })) as typeof dialog.showSaveDialog;
+    }, out);
+    await page.getByTestId("export").click();
+    await page.getByTestId(`format-${format}`).check();
+    await page.getByTestId("rate").selectOption("25");
+    await page.getByTestId("export-submit").click();
+    const result = page.getByTestId("export-result");
+    await expect(result).toContainText(`Exported ${Object.keys(expected).length} clips to ${file}`);
+    await expect(result).toContainText("25 fps");
+    // The recorder starts the timeline here, so it is sample-accurate in both formats.
+    await expect(page.getByTestId("export-accuracy")).toContainText("Recorder audio is placed to the sample");
+    if (format === "xmeml") await shot("07-exported");
+    await result.getByRole("button", { name: "Done" }).click();
+    await expect(page.getByTestId("export-dialog")).toBeHidden();
+
+    const xml = fs.readFileSync(out, "utf-8");
+    for (const name of Object.keys(expected)) expect(xml).toContain(name);
+    expect(xml).toContain(format === "xmeml" ? '<xmeml version="5">' : '<fcpxml version="1.10">');
+  }
+});
+
 test("reopens the project with its timeline", async () => {
   const start = await startOf("A002.MOV");
   await app.close();
@@ -185,5 +213,5 @@ test("reopens the project with its timeline", async () => {
   await page.getByRole("button", { name: "Smith.mcsync" }).click();
   await expect(page.getByTestId("clip-A002.MOV")).toBeAttached();
   expect(await startOf("A002.MOV")).toBeCloseTo(start, 6);
-  await shot("07-reopened");
+  await shot("08-reopened");
 });

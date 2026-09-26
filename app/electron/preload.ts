@@ -17,6 +17,8 @@ const bridge: Bridge = {
   chooseMedia: (kind) => ipcRenderer.invoke("dialog:media", kind),
   chooseProjectToOpen: () => ipcRenderer.invoke("dialog:open-project"),
   chooseProjectToCreate: (defaultName) => ipcRenderer.invoke("dialog:create-project", defaultName),
+  chooseExportPath: (defaultName, format) => ipcRenderer.invoke("dialog:export", defaultName, format),
+  showInFolder: (file) => ipcRenderer.invoke("shell:show", file),
   pathForFile: (file) => webUtils.getPathForFile(file),
   readPeaks: (directory, file, offset, length) => ipcRenderer.invoke("peaks:read", directory, file, offset, length),
   platform: process.platform,

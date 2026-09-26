@@ -187,6 +187,49 @@ export interface ClipMatch {
   rejected: boolean;
 }
 
+export type ExportFormat = "xmeml" | "fcpxml";
+
+export interface ExportOptions {
+  format: ExportFormat;
+  path: string;
+  /** "25", "24000/1001"…; omitted: the most common video rate. */
+  sequence_rate?: string;
+  start_timecode?: string;
+  group?: number;
+  include_uncertain?: boolean;
+  name?: string;
+}
+
+export interface ExportReport {
+  path: string;
+  format: ExportFormat;
+  sequence: {
+    name: string;
+    rate: string;
+    width: number;
+    height: number;
+    start_timecode: string;
+    duration_s: number;
+    video_tracks: number;
+    audio_tracks: number;
+  };
+  clips: {
+    clip_id: number;
+    name: string;
+    track: string;
+    start_s: number;
+    placed_s: number;
+    error_ms: number;
+    status: PlacementStatus;
+  }[];
+  /** Largest placement error as the format's readers see it (xmeml: in points rounded to frames). */
+  max_error_ms: number;
+  /** xmeml only: in Premiere Pro, which reads the sub-frame in points. */
+  max_error_ms_premiere?: number;
+  skipped: { clip_id: number; name: string; reason: string }[];
+  warnings: string[];
+}
+
 export interface JobRef {
   job_id: string;
 }
@@ -234,6 +277,7 @@ export interface EngineMethods {
   "correction.list": [Record<string, never>, Correction[]];
   "timeline.get": [Record<string, never>, Timeline];
   "waveform.info": [{ clip_id: number }, WaveformInfo];
+  "export.xml": [ExportOptions, ExportReport];
   "job.cancel": [{ job_id: string }, { cancelled: boolean }];
   "job.list": [Record<string, never>, JobSummary[]];
 }
@@ -264,6 +308,7 @@ export const ENGINE_METHODS: readonly Method[] = [
   "correction.list",
   "timeline.get",
   "waveform.info",
+  "export.xml",
   "job.cancel",
   "job.list",
 ];
@@ -295,7 +340,8 @@ export type MenuCommand =
   | "redo"
   | "zoom-in"
   | "zoom-out"
-  | "zoom-fit";
+  | "zoom-fit"
+  | "export";
 
 export interface RpcFailure {
   code: number;
@@ -313,6 +359,10 @@ export interface Bridge {
   chooseMedia(kind: "files" | "folder"): Promise<string[]>;
   chooseProjectToOpen(): Promise<string | null>;
   chooseProjectToCreate(defaultName: string): Promise<string | null>;
+  /** Where to write an export; null if cancelled. */
+  chooseExportPath(defaultName: string, format: ExportFormat): Promise<string | null>;
+  /** Reveal a file this app exported in the system file manager. */
+  showInFolder(path: string): Promise<void>;
   /** Filesystem path of a file dropped onto the window. */
   pathForFile(file: File): string;
   /** Bytes [offset, offset + length) of a waveform file inside the analysis cache. */

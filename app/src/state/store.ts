@@ -8,6 +8,8 @@ import type {
   CorrectionKind,
   EngineEvent,
   EngineStatus,
+  ExportOptions,
+  ExportReport,
   ImportResult,
   MediaList,
   MenuCommand,
@@ -74,6 +76,8 @@ export interface AppState {
   matches: Record<number, ClipMatch[]>;
   toasts: Toast[];
   recent: string[];
+  exportOpen: boolean;
+  lastExport: ExportReport | null;
 
   init(): () => void;
   toast(kind: Toast["kind"], text: string): void;
@@ -102,6 +106,11 @@ export interface AppState {
   undo(): Promise<void>;
   redo(): Promise<void>;
   setReference(clipId: number | null): Promise<void>;
+
+  openExport(): void;
+  closeExport(): void;
+  /** Ask where to save, write the XML, keep the report. */
+  exportXml(options: Omit<ExportOptions, "path">): Promise<ExportReport | undefined>;
 
   setView(view: View): void;
   setTimelineWidth(width: number): void;
@@ -152,6 +161,8 @@ export const useApp = create<AppState>((set, get) => ({
   matches: {},
   toasts: [],
   recent: loadRecent(),
+  exportOpen: false,
+  lastExport: null,
 
   init() {
     const off = bridge().onEvent((event) => handleEvent(event));
@@ -373,6 +384,33 @@ export const useApp = create<AppState>((set, get) => ({
     await get().run(async () => set({ timeline: await call("sync.solve", {}) }));
   },
 
+  // ------------------------------------------------------------ export
+
+  openExport() {
+    if (!get().timeline?.groups.length) {
+      get().toast("info", "Synchronise first: there is no timeline to export yet.");
+      return;
+    }
+    set({ exportOpen: true, lastExport: null });
+  },
+
+  closeExport() {
+    set({ exportOpen: false });
+  },
+
+  async exportXml(options) {
+    const project = get().project;
+    if (!project) return undefined;
+    const path = await bridge().chooseExportPath(project.name, options.format);
+    if (!path) return undefined;
+    return get().run(async () => {
+      const report = await call("export.xml", { ...options, path });
+      set({ lastExport: report });
+      get().toast("success", `Exported ${report.clips.length} clips.`);
+      return report;
+    });
+  },
+
   // -------------------------------------------------------------- view
 
   setView(view) {
@@ -434,6 +472,8 @@ function afterOpen(project: ProjectSummary): void {
     snaps: {},
     matches: {},
     cursorS: null,
+    exportOpen: false,
+    lastExport: null,
     media: { clips: [], devices: [] },
   });
   useApp.getState().invalidatePeaks();
@@ -546,6 +586,9 @@ function runMenu(command: MenuCommand): void {
       break;
     case "zoom-fit":
       app.fit();
+      break;
+    case "export":
+      if (hasProject) app.openExport();
       break;
   }
 }

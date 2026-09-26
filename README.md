@@ -20,8 +20,8 @@ audio, dozens of interrupted camera clips, mixed frame rates, drifting clocks.
 | M2 Media layer (ffprobe/ffmpeg, cache, devices) | ✅ [engine/src/mcsync/media](engine/src/mcsync/media) |
 | M3 Persistence, JSON-RPC service, CLI, parallel matching | ✅ [engine/src/mcsync/service](engine/src/mcsync/service) |
 | M4 Desktop UI and timeline | ✅ [app/](app/) |
-| M5 XML export (Resolve, Premiere) | next |
-| M6 Hardening, packaging, beta | planned |
+| M5 XML export (Resolve, Premiere) | ✅ [engine/src/mcsync/export](engine/src/mcsync/export) (NLE imports still to validate) |
+| M6 Hardening, packaging, installers | next |
 
 ## Documentation
 
@@ -43,6 +43,10 @@ python scripts/benchmark_sync.py      # speed on 10 min / 1 h / 3 h references
 
 # Synchronise real footage from the command line (needs FFmpeg on PATH)
 mcsync sync /path/to/card_dumps --project wedding.mcsync --jam-synced
+
+# Write the timeline for Premiere Pro / Resolve (.xml) or Resolve / Final Cut Pro (.fcpxml)
+mcsync export wedding.mcsync wedding.xml
+mcsync export wedding.mcsync wedding.fcpxml --rate 25 --start-tc 01:00:00:00
 ```
 
 ```python

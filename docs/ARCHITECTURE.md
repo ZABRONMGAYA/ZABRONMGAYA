@@ -79,7 +79,8 @@ engine/src/mcsync/
 ├── service/           rpc.py · jobs.py · app.py (all methods) · __main__.py            [M3 ✅]
 ├── timeline.py        timeline model and review queue (UI and export)                  [M3 ✅]
 ├── serialize.py       JSON conversion for the project file and the protocol            [M3 ✅]
-├── export/            timeline.py · xmeml.py · fcpxml.py                              [M5]
+├── export/            sequence.py (NLE sequence, exact rational placement, report) ·
+│                      xmeml.py · fcpxml.py · urls.py                                   [M5 ✅]
 └── cli.py             `mcsync serve | probe | sync <folders> [--project]`             [M3 ✅]
 ```
 
@@ -144,7 +145,7 @@ Implemented in M3 (`engine/src/mcsync/service/`), protocol version 1. Ids are th
 | `timeline.get` | → groups, tracks, clips, unsynced, review queue, stats | |
 | `waveform.info` | `{clip_id}` → cache directory, peak files, rate, audio offset | The renderer then reads the peak files itself. |
 | `job.cancel` / `job.list` | `{job_id}` | Cooperative cancellation between files, chunks and pairs. |
-| `export.xml` | `{format, path, sequence_rate, options}` → report | M5. |
+| `export.xml` | `{format: "xmeml"\|"fcpxml", path, sequence_rate?, start_timecode?, group?, include_uncertain?, name?}` → report | Writes atomically. The report gives per-clip placement errors as the format's readers see them, clips left out and why, and warnings. Every export is recorded in the project file. |
 | **Notifications** | `job.progress {job_id, kind, progress, message}` · `job.done {job_id, kind, result}` · `job.failed {job_id, kind, cancelled, error}` · `media.imported` | Progress throttled to 10 Hz. |
 
 Errors are JSON-RPC errors: −32700/−32600/−32601/−32602/−32603, plus −32000 no project open, −32001 busy (a
@@ -181,7 +182,7 @@ engine methods (typed by `app/src/api/contract.ts`), engine events, native file 
 │   │   └── lib/               formatting, plain-language labels for flags and reasons
 │   ├── tests/                 Vitest unit tests (format, geometry, waveform maths, store)
 │   └── e2e/                   Playwright-for-Electron: workflow test, 300-clip benchmark
-├── fixtures/                  golden XML files (test media is generated at test time)    [M5]
+├── fixtures/export/           golden xmeml and FCPXML files (test media is generated)    [M5 ✅]
 └── .github/workflows/         engine-ci.yml [M1 ✅] · app-ci.yml [M4 ✅] · release.yml [M6]
 ```
 
@@ -227,9 +228,9 @@ engine methods (typed by `app/src/api/contract.ts`), engine events, native file 
 | Solver tests | Outliers, manual constraints, clock domains, drift model, detached groups | `engine/tests/test_solver.py` [M1 ✅] |
 | End-to-end engine tests | Wedding-style multicam shoots, hybrid timecode, interrupted clips | `engine/tests/test_engine.py` [M1 ✅] |
 | Media integration | Real containers generated with FFmpeg (MOV/MP4/MTS/BWF, tmcd, drop-frame, chapters, delayed audio, truncation) | `engine/tests/test_media_*.py` [M2 ✅] |
-| Export golden files | xmeml/FCPXML diffed against reviewed references; schema validation | M5 |
-| NLE import checklist | Resolve and Premiere imports on every release candidate, per the matrix in the spec | M5/M6 |
+| Export | Exact placement rules; golden files diffed against reviewed references; read-backs with OpenTimelineIO (xmeml) and a reader of FCPXML's timing rules; the real synced shoot exported and checked against the truth | `engine/tests/test_export.py`, `test_service.py` [M5 ✅] |
+| NLE import checklist | Resolve and Premiere imports on every release candidate, per the matrix in the spec | not done yet: needs the NLEs (M6) |
 | UI unit tests | Formatting, timeline geometry, waveform maths (checked against the engine's μ-law decoder), store actions against a fake bridge | `app/tests/` [M4 ✅] |
-| UI end-to-end | Playwright for Electron with the real engine: new project → import a generated shoot → sync (positions checked against the truth) → inspect → drag → undo → nudge → snap → reject/restore → reopen | `app/e2e/app.spec.ts` [M4 ✅]; export in M5 |
+| UI end-to-end | Playwright for Electron with the real engine: new project → import a generated shoot → sync (positions checked against the truth) → inspect → drag → undo → nudge → snap → reject/restore → export both formats → reopen | `app/e2e/app.spec.ts` [M4 ✅, M5 ✅] |
 | UI performance | 300-clip, 3-hour project served by a stand-in engine; frame intervals while panning and zooming | `app/e2e/timeline-perf.spec.ts` [M4 ✅] |
 | Benchmarks | `scripts/benchmark_sync.py`; regressions tracked per release | M1 ✅ |

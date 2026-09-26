@@ -26,7 +26,7 @@ Workflow: **import** folders/cards → **sync** (one click) → **review** the f
 | R4 | Timecode-based sync where available | Timecode maths (§5), clock domains in the solver, hybrid/timecode modes ([SYNC_ENGINE §7–8](SYNC_ENGINE.md)) | **M1 ✅** (engine), M2 (metadata) |
 | R5 | Detect uncertain matches; allow manual corrections | Confidence model and flags; review queue; manual offsets, rejections, exclusions, snap-to-audio (§7) | **M1 ✅** (engine), **M4 ✅** (UI) |
 | R6 | Display synchronised camera tracks on a timeline | Timeline model (§6), canvas timeline with waveform peaks | **M4 ✅** |
-| R7 | Export XML for DaVinci Resolve and Premiere Pro | xmeml v5 (both NLEs), FCPXML 1.10 (Resolve, sample-accurate audio) (§8) | M5 |
+| R7 | Export XML for DaVinci Resolve and Premiere Pro | xmeml v5 (both NLEs), FCPXML 1.10 (Resolve, sample-accurate audio) (§8) | **M5 ✅** (NLE imports still to validate) |
 | R8 | Preserve original media without re-encoding | Read-only access, separate cache, XML references originals; no encoder in the FFmpeg build | all |
 | R9 | Long recordings, interrupted clips, different frame rates | Streaming extraction and memory-mapped cache; drift-aware solver; device clock domains; transitive placement; rational frame rates (§5, §6) | **M1 ✅** (engine), M2 |
 
@@ -167,43 +167,82 @@ overlaid waveforms of the clip and its best neighbour.
 
 ## 8. Export
 
-### 8.1 FCP7 XML (xmeml version 5): primary, imported by Premiere Pro and DaVinci Resolve
+Implemented in M5 (`engine/src/mcsync/export/`). Both formats are built from one sequence model, and one timeline
+group is exported: by default group 0, the reference and everything synced to it.
 
-* One `<sequence>` with `<rate><timebase>` and `<ntsc>` (TRUE for 1001-denominator rates), plus
-  `<timecode>` for the start.
-* `<media><video>`: one `<track>` per camera device. `<media><audio>`: one `<track>` per audio channel/device.
-  Camera audio goes on its own tracks, linked to its video clipitem.
-* Each `<clipitem>` has `<start>`/`<end>` (sequence frames), `<in>`/`<out>` (source frames) and a `<file id>` with
-  `<pathurl>` (`file://` URL, RFC 3986 percent-encoding, `localhost` form on Windows), `<rate>`, `<duration>`,
-  `<timecode>`, and `<media>` audio/video `<samplecharacteristics>`. Repeated references to a file use the empty
-  `<file id="…"/>` form.
-* **Mixed frame rates:** each file keeps its own `<rate>`; clip positions are converted with exact rationals.
-  Which timebase `<in>`/`<out>` must use for mixed-rate clips differs between NLE versions. It is pinned down with
-  golden files and real imports in M5 before the exporter is considered done.
-* **Quantisation:** positions are rounded to whole sequence frames, at most ½ frame (for example ±20 ms at 25 fps).
-  The export report lists each clip's rounding. Audio-only clips on a 25 fps sequence can be ±20 ms off, which is
-  audible as echo if camera audio and recorder audio are mixed; hence FCPXML.
+### 8.1 Sequence and placement
 
-### 8.2 FCPXML 1.10: secondary, for DaVinci Resolve (and Final Cut Pro)
+* **Frame rate:** the video rate covering the most footage, or the user's choice. **Frame size:** the most common
+  size at that rate. **Start timecode:** default `01:00:00:00`; `;` before the frames means drop-frame at 29.97 and
+  59.94.
+* **Tracks:** one video track per camera device (and per overflow lane), in timeline order. Each device also gets
+  one audio track per channel of its audio stream: the stream chosen for syncing, otherwise the file's first.
+  Recorder tracks are named from the BWF/iXML track names when present.
+* **Positions are exact rationals** (`Fraction`), rounded once:
+  * A clip with video starts on the nearest sequence frame from its first frame, at most ½ frame off (±20 ms at
+    25 fps). That is the resolution any NLE places video at.
+  * An audio-only clip (the recorder) starts on the first sequence frame at or after its true start. Its in point
+    carries the sub-frame difference, to the sample. Formats with sub-frame in points place it exactly: FCPXML, and
+    Premiere Pro through `pproTicksIn`. Readers that round in points to frames (Resolve reading xmeml) are at most
+    ½ frame off.
+  * Clip lengths are the media's own length in sequence frames, so an out point never passes the end of the media.
+    Back-to-back clips of one device that overlap by a frame or two after rounding are trimmed; larger overlaps are
+    reported.
+* **Clips left out:** offline or changed media; other groups; clips not placed; optionally clips that need review.
+  The report lists each of them with the reason.
+* **Report:** per clip, the synchronised and exported positions and the error, as the format's readers will see it.
+  Warnings cover clips placed by uncertain matches or camera clocks, variable frame rate, and clock drift beyond ½
+  frame at a clip's ends. Clips are aligned at their middle; retiming in export is an M6 option.
 
-Rational time values (`"12012/24000s"`, `"441/44100s"`) allow sample-accurate audio placement. Structure: `<resources>`
-(formats, assets with `media-rep src`), `<library><event><project><sequence><spine>` with a gap as the spine and
-connected clips on lanes per device.
+### 8.2 FCP 7 XML (xmeml version 5): Premiere Pro and DaVinci Resolve
 
-### 8.3 Guarantees
+* One `<sequence>` with `<rate>` (`<timebase>` plus `<ntsc>` TRUE for 1001-denominator rates) and a `<timecode>`.
+* Clip items follow Premiere Pro's convention for mixed-rate sequences:
+  * `<rate>` is the sequence rate;
+  * `<start>`/`<end>` count sequence frames from the sequence's first frame;
+  * `<in>`/`<out>`/`<duration>` are sequence frames counted from the file's first frame;
+  * `<pproTicksIn>`/`<pproTicksOut>` hold the exact in point (254 016 000 000 ticks per second).
+* Each `<file>` keeps its own rate, length and timecode, and is described in full once. After that it is referenced
+  as `<file id="…"/>`.
+* `<pathurl>` is `file://localhost/…`, percent-encoded as UTF-8 (RFC 3986). Windows paths become
+  `file://localhost/C:/…` and UNC paths `file://server/share/…`.
+* Camera audio items (one per channel, `<sourcetrack>` = channel) are linked to their video item.
 
-* Original files are referenced, never copied or transcoded; exports are written atomically.
-* A validation pass before writing checks for missing or offline files, zero-length clips and overlapping clips on
-  one track.
-* **NLE validation matrix, per release:**
+### 8.3 FCPXML 1.10: DaVinci Resolve and Final Cut Pro
+
+* `<resources>` holds one `<format>` per frame rate and size, and one `<asset>` per file. The asset carries a
+  `media-rep` URL (`file:///…`) and the file's own start: its timecode, or for recorders the BWF time reference, to
+  the sample.
+* The spine holds one gap spanning the sequence. Every clip is a connected `asset-clip`: cameras on lanes 1, 2, …
+  with their own audio, recorders on lanes −1, −2, ….
+  * `offset` is on the sequence's frame grid.
+  * `start` is the asset start plus the in point, on the media's frame grid (video) or sample grid (audio).
+* Times are rationals over the frame or sample grid, as Final Cut Pro writes them: `"86486400/24000s"`,
+  `"1728001824/48000s"`.
+
+### 8.4 Guarantees and validation
+
+* Original files are referenced, never copied or transcoded; exports are written atomically (temporary file, then
+  rename).
+* **Automated:**
+  * golden files (`fixtures/export/`);
+  * xmeml read back with OpenTimelineIO's FCP 7 XML adapter;
+  * FCPXML read back by a reader of the format's timing rules. OpenTimelineIO's FCPXML adapter truncates NTSC
+    rates, so it only checks an integer-rate file.
+  * the generated shoot is synced, exported in both formats, and every clip checked against the truth within ½
+    frame.
+* **NLE validation matrix, per release (manual, not done yet):**
 
   | NLE | Versions | xmeml import | FCPXML import |
   |---|---|---|---|
-  | DaVinci Resolve | 19, 20 | ✓ | ✓ |
-  | Premiere Pro | 2025, 2026 | ✓ | — |
+  | DaVinci Resolve | 19, 20 | to check | to check |
+  | Premiere Pro | 2025, 2026 | to check | — |
 
   Each import is checked for correct positions, relinked media, audio channel mapping, and mixed-rate behaviour
-  (23.976 + 29.97 DF + 50).
+  (23.976 + 29.97 DF + 50). Open questions an import settles:
+  * whether each NLE takes the xmeml mixed-rate convention above;
+  * whether Resolve derives FCPXML asset starts from the file's timecode as written;
+  * how BWF files without a frame rate display their timecode.
 
 ## 9. Edge cases
 

@@ -1,0 +1,7 @@
+# LF everywhere, on every platform: formatters and golden files compare bytes.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.ico binary
+*.icns binary

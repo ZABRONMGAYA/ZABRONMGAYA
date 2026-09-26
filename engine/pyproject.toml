@@ -17,6 +17,10 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "ruff>=0.5",
+    # Independent readers of exported timelines (tests only)
+    "opentimelineio>=0.17",
+    "otio-fcp-adapter>=1.0",
+    "otio-fcpx-xml-adapter>=1.0",
 ]
 
 [project.scripts]

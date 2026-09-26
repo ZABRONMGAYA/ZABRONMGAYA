@@ -18,6 +18,12 @@ import { EngineProcess, RpcError, engineCommand } from "./engine";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const allowed = new Set<string>(ENGINE_METHODS);
 const PROJECT_FILTER = { name: "Multicam Sync project", extensions: ["mcsync"] };
+const EXPORT_FILTERS: Record<"xmeml" | "fcpxml", Electron.FileFilter> = {
+  xmeml: { name: "FCP 7 XML (Premiere Pro, DaVinci Resolve)", extensions: ["xml"] },
+  fcpxml: { name: "FCPXML (DaVinci Resolve, Final Cut Pro)", extensions: ["fcpxml"] },
+};
+// Files this session exported: the only ones the renderer may reveal in the file manager.
+const exported = new Set<string>();
 
 if (process.env.MCSYNC_NO_SANDBOX === "1") {
   app.commandLine.appendSwitch("no-sandbox"); // CI containers running as root
@@ -84,6 +90,8 @@ function buildMenu(): void {
         { label: "Import Files…", accelerator: "CmdOrCtrl+I", click: menuCommand("import-files") },
         { label: "Import Folder…", accelerator: "CmdOrCtrl+Shift+I", click: menuCommand("import-folder") },
         { type: "separator" },
+        { label: "Export XML…", accelerator: "CmdOrCtrl+E", click: menuCommand("export") },
+        { type: "separator" },
         { label: "Close Project", accelerator: "CmdOrCtrl+W", click: menuCommand("close-project") },
         ...(isMac ? [] : [{ type: "separator" as const }, { role: "quit" as const }]),
       ],
@@ -124,7 +132,9 @@ function registerIpc(): void {
   ipcMain.handle("engine:invoke", async (_e, method: string, params: unknown): Promise<InvokeResponse<unknown>> => {
     if (!allowed.has(method)) return { ok: false, error: { code: -32601, message: `not allowed: ${method}` } };
     try {
-      return { ok: true, result: await engine.request(method as Method, params ?? {}) };
+      const result = await engine.request(method as Method, params ?? {});
+      if (method === "export.xml") exported.add(path.resolve((result as { path: string }).path));
+      return { ok: true, result };
     } catch (err) {
       const e = err instanceof RpcError ? err : new RpcError(-32603, String(err));
       return { ok: false, error: { code: e.code, message: e.message } };
@@ -149,6 +159,19 @@ function registerIpc(): void {
       filters: [PROJECT_FILTER],
     });
     return result.canceled || !result.filePath ? null : result.filePath;
+  });
+  ipcMain.handle("dialog:export", async (_e, defaultName: string, format: keyof typeof EXPORT_FILTERS) => {
+    const filter = EXPORT_FILTERS[format] ?? EXPORT_FILTERS.xmeml;
+    const result = await dialog.showSaveDialog(window!, {
+      title: "Export timeline",
+      defaultPath: `${defaultName}.${filter.extensions[0]}`,
+      filters: [filter],
+    });
+    return result.canceled || !result.filePath ? null : result.filePath;
+  });
+  ipcMain.handle("shell:show", (_e, file: string) => {
+    const full = path.resolve(file);
+    if (exported.has(full)) shell.showItemInFolder(full);
   });
   // Waveform overviews live in the engine's cache; only files inside it can be read.
   ipcMain.handle("peaks:read", async (_e, directory: string, file: string, offset: number, length: number) => {

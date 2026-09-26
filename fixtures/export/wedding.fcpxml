@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE fcpxml>
+<fcpxml version="1.10">
+  <resources>
+    <format id="r1" frameDuration="1001/24000s" width="1920" height="1080" />
+    <asset id="r2" name="A001.MOV" start="865584720/24000s" duration="2879877/24000s" hasVideo="1" format="r1" videoSources="1" hasAudio="1" audioSources="1" audioChannels="2" audioRate="48000">
+      <media-rep kind="original-media" src="file:///Volumes/Card%20A/A001.MOV" />
+    </asset>
+    <asset id="r3" name="A002.MOV" start="868719852/24000s" duration="4799795/24000s" hasVideo="1" format="r1" videoSources="1" hasAudio="1" audioSources="1" audioChannels="2" audioRate="48000">
+      <media-rep kind="original-media" src="file:///Volumes/Card%20A/A002.MOV" />
+    </asset>
+    <format id="r4" frameDuration="1001/30000s" width="1920" height="1080" />
+    <asset id="r5" name="C0001 #2.MP4" start="1081800720/30000s" duration="4499495/30000s" hasVideo="1" format="r4" videoSources="1" hasAudio="1" audioSources="1" audioChannels="2" audioRate="48000">
+      <media-rep kind="original-media" src="file:///C:/Footage/Cam%20B/C0001%20%232.MP4" />
+    </asset>
+    <format id="r6" frameDuration="1/50s" width="1920" height="1080" />
+    <asset id="r7" name="GH010042.MP4" start="0s" duration="70s" hasVideo="1" format="r6" videoSources="1" hasAudio="1" audioSources="1" audioChannels="2" audioRate="48000">
+      <media-rep kind="original-media" src="file:///Volumes/GoPro/GH010042.MP4" />
+    </asset>
+    <asset id="r8" name="GH020042.MP4" start="0s" duration="60s" hasVideo="1" format="r6" videoSources="1" hasAudio="1" audioSources="1" audioChannels="2" audioRate="48000">
+      <media-rep kind="original-media" src="file:///Volumes/GoPro/GH020042.MP4" />
+    </asset>
+    <format id="r9" frameDuration="1/30s" width="1920" height="1080" />
+    <asset id="r10" name="DJI_0001.MP4" start="36300s" duration="40s" hasVideo="1" format="r9" videoSources="1">
+      <media-rep kind="original-media" src="file:///Volumes/Drone/DJI_0001.MP4" />
+    </asset>
+    <asset id="r11" name="230614_001.WAV" start="36000s" duration="600s" hasAudio="1" audioSources="1" audioChannels="4" audioRate="48000">
+      <media-rep kind="original-media" src="file:///Volumes/ZOOM%20F8/230614_001.WAV" />
+    </asset>
+  </resources>
+  <library>
+    <event name="Multicam Sync">
+      <project name="Smith wedding">
+        <sequence format="r1" duration="14639625/24000s" tcStart="86486400/24000s" tcFormat="NDF" audioLayout="stereo" audioRate="48k">
+          <spine>
+            <gap name="Gap" offset="86486400/24000s" start="86486400/24000s" duration="14639625/24000s">
+              <asset-clip ref="r7" lane="3" offset="86486400/24000s" name="GH010042.MP4" start="0s" duration="1679678/24000s" tcFormat="NDF" audioRole="dialogue" />
+              <asset-clip ref="r11" lane="-1" offset="86727641/24000s" name="230614_001.WAV" start="1728001824/48000s" duration="14398384/24000s" tcFormat="NDF" audioRole="dialogue" />
+              <asset-clip ref="r2" lane="1" offset="87447360/24000s" name="A001.MOV" start="865584720/24000s" duration="2879877/24000s" tcFormat="NDF" audioRole="dialogue" />
+              <asset-clip ref="r8" lane="3" offset="88166078/24000s" name="GH020042.MP4" start="0s" duration="1439438/24000s" tcFormat="NDF" audioRole="dialogue" />
+              <asset-clip ref="r5" lane="2" offset="88171083/24000s" name="C0001 #2.MP4" start="1081800720/30000s" duration="3599596/24000s" tcFormat="DF" audioRole="dialogue" />
+              <asset-clip ref="r3" lane="1" offset="90578488/24000s" name="A002.MOV" start="868719852/24000s" duration="4799795/24000s" tcFormat="NDF" audioRole="dialogue" />
+              <asset-clip ref="r10" lane="4" offset="93926833/24000s" name="DJI_0001.MP4" start="36300s" duration="959959/24000s" tcFormat="NDF" />
+            </gap>
+          </spine>
+        </sequence>
+      </project>
+    </event>
+  </library>
+</fcpxml>

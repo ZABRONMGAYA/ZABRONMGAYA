@@ -3,6 +3,7 @@ import { type DragEvent, useEffect, useRef, useState } from "react";
 import { bridge } from "./api/client";
 import { StatusBar } from "./components/StatusBar";
 import { Toasts } from "./components/Toasts";
+import { ExportDialog } from "./features/export/ExportDialog";
 import { Inspector } from "./features/inspector/Inspector";
 import { ReviewQueue } from "./features/inspector/ReviewQueue";
 import { MediaBin } from "./features/media/MediaBin";
@@ -71,6 +72,7 @@ export function App() {
         <Welcome />
       )}
       <StatusBar />
+      <ExportDialog />
       <Toasts />
     </div>
   );

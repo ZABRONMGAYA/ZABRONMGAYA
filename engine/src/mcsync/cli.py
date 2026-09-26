@@ -3,6 +3,7 @@
     mcsync serve                       JSON-RPC on stdin/stdout (what the desktop app runs)
     mcsync probe FILE...               metadata as JSON (for bug reports about unusual files)
     mcsync sync PATH... [options]      import folders/files, synchronise, print the placements
+    mcsync export PROJECT OUTPUT       write the synchronised timeline as XML (Premiere Pro, Resolve)
 
 ``sync`` uses the same service code as the desktop app, so a project it writes
 (``--project``) opens in the app with its matches, and running it again on a
@@ -88,11 +89,65 @@ def cmd_sync(args: argparse.Namespace) -> int:
         result = job.result
         if args.json:
             print(json.dumps(result, indent=2))
-            return 0
-        _print_timeline(result)
+        else:
+            _print_timeline(result)
+        if args.export:
+            _print_export(_export(service, args.export, args))
         return 0
     finally:
         service.close()
+
+
+def _export(service, output: str, args: argparse.Namespace) -> dict:  # noqa: ANN001 - EngineService
+    fmt = args.format or ("fcpxml" if output.lower().endswith(".fcpxml") else "xmeml")
+    return service.export_xml(
+        format=fmt,
+        path=output,
+        sequence_rate=args.rate,
+        start_timecode=args.start_tc,
+        include_uncertain=not args.exclude_uncertain,
+    )
+
+
+def cmd_export(args: argparse.Namespace) -> int:
+    from mcsync.service.app import EngineService
+
+    service = EngineService(notify=None, cache_dir=args.cache_dir, workers=args.workers)
+    try:
+        service.project_open(args.project)
+        _print_export(_export(service, args.output, args))
+        return 0
+    except ValueError as exc:
+        print(f"export failed: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        service.close()
+
+
+def _print_export(report: dict) -> None:
+    seq = report["sequence"]
+    rate = seq["rate"].split("/")
+    fps = int(rate[0]) / int(rate[1])
+    premiere = report.get("max_error_ms_premiere")
+    print(
+        f"wrote {report['path']} ({report['format']}): {len(report['clips'])} clips on {seq['video_tracks']} video and "
+        f"{seq['audio_tracks']} audio tracks, {fps:.3f} fps from {seq['start_timecode']}"
+    )
+    print(
+        f"largest placement error {report['max_error_ms']:.1f} ms"
+        + (f" (Premiere Pro, with sub-frame in points: {premiere:.1f} ms)" if premiere is not None else "")
+    )
+    for s in report["skipped"]:
+        print(f"not exported: {s['name']} ({s['reason']})")
+    for w in report["warnings"]:
+        print(f"warning: {w}")
+
+
+def _add_export_options(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--format", choices=["xmeml", "fcpxml"], help="default: from the extension (.fcpxml or .xml)")
+    p.add_argument("--rate", help="sequence frame rate, e.g. 25 or 24000/1001 (default: the most common)")
+    p.add_argument("--start-tc", default="01:00:00:00", help="sequence start timecode (default 01:00:00:00)")
+    p.add_argument("--exclude-uncertain", action="store_true", help="leave out clips that need review")
 
 
 def _print_timeline(result: dict) -> None:
@@ -136,7 +191,15 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--reference", help="file to use as the reference clip")
     s.add_argument("--jam-synced", action="store_true", default=None, help="all devices share jam-synced timecode")
     s.add_argument("--json", action="store_true", help="print the full result as JSON")
+    s.add_argument("--export", metavar="OUTPUT", help="also write the timeline as XML")
+    _add_export_options(s)
     s.set_defaults(func=cmd_sync)
+
+    e = sub.add_parser("export", help="write a project's synchronised timeline as XML for Premiere Pro or Resolve")
+    e.add_argument("project")
+    e.add_argument("output", help="an .xml (FCP 7 XML) or .fcpxml file")
+    _add_export_options(e)
+    e.set_defaults(func=cmd_export)
 
     args = parser.parse_args(argv)
     return int(args.func(args))

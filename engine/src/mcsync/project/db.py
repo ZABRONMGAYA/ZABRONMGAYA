@@ -355,6 +355,20 @@ class Project:
     def runs(self) -> list[dict]:
         return [dict(r) for r in self._query("SELECT * FROM sync_run ORDER BY id")]
 
+    # --------------------------------------------------------------- exports
+
+    def record_export(self, fmt: str, path: str, sequence_rate: str, report: dict) -> int:
+        with self._tx() as c:
+            cur = c.execute(
+                "INSERT INTO export (format, path, sequence_rate, created_at, report_json) VALUES (?, ?, ?, ?, ?)",
+                (fmt, path, sequence_rate, _now(), json.dumps(report)),
+            )
+            return int(cur.lastrowid)  # type: ignore[arg-type]
+
+    def exports(self) -> list[dict]:
+        rows = self._query("SELECT id, format, path, sequence_rate, created_at FROM export ORDER BY id")
+        return [dict(r) for r in rows]
+
     def last_completed_run(self) -> int | None:
         rows = self._query("SELECT id FROM sync_run WHERE status = 'completed' ORDER BY id DESC LIMIT 1")
         return int(rows[0]["id"]) if rows else None

@@ -8,20 +8,35 @@ const MODES: { value: SyncMode; label: string; hint: string }[] = [
 ];
 
 export function Toolbar() {
-  const { project, media, jobs, lastSync, importMedia, sync, cancelJob, updateSettings, undo, redo, setReference } =
-    usePick(
-      "project",
-      "media",
-      "jobs",
-      "lastSync",
-      "importMedia",
-      "sync",
-      "cancelJob",
-      "updateSettings",
-      "undo",
-      "redo",
-      "setReference",
-    );
+  const {
+    project,
+    media,
+    jobs,
+    lastSync,
+    importMedia,
+    sync,
+    cancelJob,
+    updateSettings,
+    undo,
+    redo,
+    setReference,
+    timeline,
+    openExport,
+  } = usePick(
+    "project",
+    "media",
+    "jobs",
+    "lastSync",
+    "importMedia",
+    "sync",
+    "cancelJob",
+    "updateSettings",
+    "undo",
+    "redo",
+    "setReference",
+    "timeline",
+    "openExport",
+  );
   if (!project) return null;
   const settings = project.settings;
   const running = Object.values(jobs).filter((j) => j.status === "running");
@@ -120,7 +135,12 @@ export function Toolbar() {
         <button onClick={() => void redo()} disabled={busy} title="Redo">
           Redo
         </button>
-        <button disabled title="XML export arrives in the next milestone (M5)">
+        <button
+          onClick={openExport}
+          disabled={busy || !timeline?.groups.length}
+          title="Write the timeline for Premiere Pro or DaVinci Resolve (⌘/Ctrl+E)"
+          data-testid="export"
+        >
           Export XML…
         </button>
       </div>

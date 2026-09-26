@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from mcsync import __version__
+from mcsync.export import ExportOptions, export_timeline
 from mcsync.media.cache import AnalysisCache
 from mcsync.media.extract import extract_to_cache
 from mcsync.media.library import build_clip_inputs, scan_media
@@ -34,6 +35,7 @@ from mcsync.serialize import to_jsonable
 from mcsync.sync.engine import CandidatePair, SyncEngine, SyncOptions, create_match_pool
 from mcsync.sync.params import DEFAULT_PARAMS, SyncParams
 from mcsync.sync.types import ClipInput, PairwiseMatch, SyncMode
+from mcsync.timecode import parse_frame_rate
 from mcsync.timeline import build_timeline
 
 from .jobs import Job, JobManager
@@ -80,7 +82,7 @@ class EngineService:
             "device.update", "clip.assign_device", "clip.set_audio",
             "sync.run", "sync.solve", "sync.snap", "sync.matches",
             "correction.add", "correction.undo", "correction.redo", "correction.list",
-            "timeline.get", "waveform.info",
+            "timeline.get", "waveform.info", "export.xml",
             "job.cancel", "job.list",
         ):  # fmt: skip
             server.register(name, getattr(self, name.replace(".", "_")))
@@ -473,6 +475,34 @@ class EngineService:
         placements = project.placements()
         ref = self._settings().get("reference_clip_id")
         return to_jsonable(build_timeline(project.clips(), placements, ref))
+
+    # ---------------------------------------------------------------- export
+
+    def export_xml(
+        self,
+        format: str,
+        path: str,
+        sequence_rate: str | None = None,
+        start_timecode: str = "01:00:00:00",
+        group: int = 0,
+        include_uncertain: bool = True,
+        name: str | None = None,
+    ) -> dict:
+        """Write the synchronised timeline as FCP 7 XML ("xmeml") or FCPXML ("fcpxml"); return the report."""
+        self._require_idle({"sync"})
+        project = self._require_project()
+        rows = project.clips()
+        timeline = build_timeline(rows, project.placements(), self._settings().get("reference_clip_id"))
+        options = ExportOptions(
+            name=name or project.name,
+            sequence_rate=parse_frame_rate(sequence_rate) if sequence_rate else None,
+            start_timecode=start_timecode,
+            group=group,
+            include_uncertain=include_uncertain,
+        )
+        report = export_timeline(timeline, {r.id: r for r in rows}, format, path, options)
+        project.record_export(format, path, report["sequence"]["rate"], report)
+        return report
 
     def waveform_info(self, clip_id: int) -> dict:
         """Where the clip's waveform overview lives; the app reads the files directly."""

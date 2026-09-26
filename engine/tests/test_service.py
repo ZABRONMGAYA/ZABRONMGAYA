@@ -185,6 +185,50 @@ def test_full_workflow(svc, tmp_path, wedding_shoot):
     assert reopened["clips"] == len(shoot.truth) and reopened["settings"]["timecode_jam_synced"] is True
 
 
+def test_export_through_the_service_and_cli(svc, tmp_path, wedding_shoot, capsys):
+    shoot = wedding_shoot
+    project = tmp_path / "wedding.mcsync"
+    svc.call("project.create", path=str(project), name="Smith")
+    svc.run_job("media.import", paths=[str(shoot.root)])
+    svc.run_job("sync.run", timecode_jam_synced=True)
+    with pytest.raises(RpcFailure, match="unknown export format"):
+        svc.call("export.xml", format="edl", path=str(tmp_path / "x.edl"))
+
+    xml = svc.call("export.xml", format="xmeml", path=str(tmp_path / "smith.xml"), sequence_rate="25")
+    fcpxml = svc.call("export.xml", format="fcpxml", path=str(tmp_path / "smith.fcpxml"), sequence_rate="25")
+    for report in (xml, fcpxml):
+        assert report["sequence"]["name"] == "Smith" and report["sequence"]["rate"] == "25/1"
+        assert len(report["clips"]) == len(shoot.truth) and report["skipped"] == []
+        assert report["max_error_ms"] <= 20.0 + 1e-6  # half a frame at 25 fps
+    assert xml["max_error_ms_premiere"] <= 20.0 + 1e-6
+    assert [e["format"] for e in svc.service.project.exports()] == ["xmeml", "fcpxml"]
+
+    # Read both files back independently and check every clip against the truth, relative to the recorder.
+    from mcsync.testing.nle import read_fcpxml, read_xmeml
+
+    xmeml_items = read_xmeml((tmp_path / "smith.xml").read_text())
+    assert all(len(p) == 1 for p in xmeml_items.values())  # a clip's video and audio items agree
+    xmeml_positions = {n: p.pop() for n, p in xmeml_items.items()}
+    fcpxml_positions = {n: c["first_sample"] for n, c in read_fcpxml((tmp_path / "smith.fcpxml").read_text()).items()}
+    for positions in (xmeml_positions, fcpxml_positions):
+        recorder = positions["230614_001.WAV"]
+        assert set(positions) == {Path(rel).name for rel in shoot.truth}
+        for rel in shoot.truth:
+            name = Path(rel).name
+            sync_tolerance = 0.04 if name == "DJI_0001.MP4" else 0.002  # timecode vs audio placement
+            error = float(positions[name] - recorder) - shoot.expected(rel)
+            assert abs(error) <= 0.02 + sync_tolerance, (name, error)
+
+    # The same through the command line.
+    from mcsync.cli import main
+
+    out = tmp_path / "cli.fcpxml"
+    assert main(["--cache-dir", str(tmp_path / "cache"), "export", str(project), str(out), "--rate", "25"]) == 0
+    printed = capsys.readouterr().out
+    assert f"wrote {out} (fcpxml): {len(shoot.truth)} clips" in printed
+    assert out.read_text() == (tmp_path / "smith.fcpxml").read_text()
+
+
 def test_parallel_matching_through_the_service(tmp_path, wedding_shoot):
     s = InProcess(tmp_path, workers=2)
     try:

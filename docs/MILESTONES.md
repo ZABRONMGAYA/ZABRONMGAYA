@@ -12,8 +12,8 @@ Estimates assume one senior engineer; UI milestones parallelise well with a seco
 | M2 | Media layer: probe, extract, cache, devices | 2–3 weeks | ✅ done |
 | M3 | Project persistence, engine service (JSON-RPC), CLI, parallelism | 2–3 weeks | ✅ done |
 | M4 | Desktop shell and timeline UI | 4–6 weeks | ✅ done |
-| M5 | XML export and NLE validation | 2–3 weeks | next |
-| M6 | Hardening, packaging, beta | 3–4 weeks | |
+| M5 | XML export and NLE validation | 2–3 weeks | ✅ export done; NLE imports to validate |
+| M6 | Hardening, packaging, beta | 3–4 weeks | next |
 
 ## M0: Architecture and specifications ✅
 
@@ -194,22 +194,39 @@ seconds); XAVC LTC change tables in sidecars (tmcd tracks cover those cameras).
 **Risks:** timeline rendering performance. Mitigation: one canvas, culling, waveform levels chosen by zoom, no
 per-frame allocation or style reads, and a benchmark in CI to catch regressions.
 
-## M5: XML export and NLE validation
+## M5: XML export and NLE validation ✅ (NLE imports still to validate)
 
-**Scope:**
+**Deliverables:**
 
-* `export/timeline.py`: sequence model, rate selection, exact rational frame conversion, rounding report.
-* `export/xmeml.py` (Premiere Pro + Resolve), `export/fcpxml.py` (Resolve, sample-accurate audio).
-* Golden-file tests.
-* The manual NLE validation matrix (Resolve 19/20, Premiere 2025/2026), with mixed rates and drop-frame.
+* `export/sequence.py`: the NLE sequence model. It covers:
+  * automatic or chosen frame rate, frame size and start timecode (drop-frame too);
+  * tracks per device and channel, named from BWF/iXML;
+  * exact rational placement: video on the nearest frame, recorder audio to the sample through a sub-frame in
+    point;
+  * clips left out with reasons, warnings, and a per-clip error report.
+* `export/xmeml.py` (Premiere Pro, Resolve) with Premiere's sub-frame ticks and linked camera audio;
+  `export/fcpxml.py` (Resolve, Final Cut Pro) with rational times; `export/urls.py` for portable file URLs,
+  Windows and UNC paths included.
+* Service `export.xml` (atomic writes, each export recorded in the project); CLI `mcsync export PROJECT OUT` and
+  `mcsync sync … --export OUT`.
+* App: an export dialog (format, frame rate, start timecode, clips needing review) and a report view. It shows
+  accuracy for cameras and recorder audio separately, lists clips left out and warnings, and can reveal the file.
+* Tests:
+  * the placement rules and errors;
+  * golden files;
+  * xmeml read back with OpenTimelineIO, FCPXML with a reader of its timing rules;
+  * the real synced shoot exported through the service and the CLI, every clip within ½ frame of the truth;
+  * the app exporting both formats end to end.
 
 **Exit criteria:**
 
-* Every cell of the validation matrix imports with all clips at the expected positions (±½ frame for xmeml, exact
-  for FCPXML), media linked, and audio channels mapped.
+* **Not yet met.** "Every cell of the validation matrix imports correctly" needs DaVinci Resolve and Premiere Pro,
+  which this environment does not have. The files follow each format's documented conventions and read back
+  correctly with independent readers. The first real imports are the top item for the M6 beta ([TECHNICAL_SPEC
+  §8.4](TECHNICAL_SPEC.md) lists what they must settle).
 
-**Risks:** undocumented NLE import behaviour for mixed frame rates. Mitigation: golden files derived from what each NLE
-itself exports, and version-specific tests.
+**Risks:** undocumented NLE import behaviour for mixed frame rates. Mitigation: golden files, one module per format
+so a fix stays local, and NLE-derived golden files once real exports are available.
 
 ## M6: Hardening, packaging, beta
 
