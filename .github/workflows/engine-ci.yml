@@ -26,6 +26,15 @@ jobs:
           python-version: ${{ matrix.python }}
           cache: pip
           cache-dependency-path: engine/pyproject.toml
+      - name: Install FFmpeg
+        shell: bash
+        run: |
+          case "$RUNNER_OS" in
+            Linux) sudo apt-get update -q && sudo apt-get install -y -q ffmpeg ;;
+            macOS) brew install ffmpeg ;;
+            Windows) choco install ffmpeg -y --no-progress ;;
+          esac
+          ffmpeg -hide_banner -version | head -1
       - run: python -m pip install -e ".[dev]"
       - run: ruff check src tests scripts
       - run: ruff format --check src tests scripts

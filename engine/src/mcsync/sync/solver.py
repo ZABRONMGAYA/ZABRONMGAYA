@@ -61,6 +61,7 @@ from .params import DEFAULT_SOLVER_PARAMS, SolverParams
 from .types import (
     ClipInput,
     ClipPlacement,
+    ClockReading,
     ClockSource,
     EdgeKind,
     EdgeReport,
@@ -132,6 +133,38 @@ class _OffsetUnionFind:
         return True
 
 
+def clock_starts(clips: Sequence[ClipInput]) -> dict[tuple[str, ClockReading], float]:
+    """Every clip's clock readings, made comparable within each domain.
+
+    Time-of-day readings are unwrapped across midnight, and each domain is
+    shifted so its earliest reading is 0 (epoch-based creation times would
+    otherwise be ~1.8e9 s, which costs the least-squares solve precision).
+    """
+    by_domain: dict[str, list[tuple[str, ClockReading]]] = defaultdict(list)
+    for c in clips:
+        for clock in c.clocks:
+            by_domain[clock.domain].append((c.clip_id, clock))
+    out: dict[tuple[str, ClockReading], float] = {}
+    for members in by_domain.values():
+        values = [clock.start_s for _, clock in members]
+        if all(clock.source.is_time_of_day for _, clock in members):
+            values = unwrap_midnight(values)
+        base = min(values)
+        out.update({member: v - base for member, v in zip(members, values, strict=True)})
+    return out
+
+
+def clock_sigma(clock: ClockReading, params: SolverParams) -> float:
+    if clock.sigma_s is not None:
+        return clock.sigma_s
+    return {
+        ClockSource.TIMECODE: params.timecode_sigma_s,
+        ClockSource.BWF: params.bwf_sigma_s,
+        ClockSource.CREATION_TIME: params.creation_time_sigma_s,
+        ClockSource.CHAPTER: params.chapter_sigma_s,
+    }[clock.source]
+
+
 def unwrap_midnight(values: Sequence[float]) -> list[float]:
     """Unwrap time-of-day readings (seconds) that cross midnight.
 
@@ -176,8 +209,9 @@ def solve_placements(
     domains: dict[str, int] = {}
     if use_clock:
         for c in clips:
-            if c.clock is not None and c.clip_id not in excluded:
-                domains.setdefault(c.clock.domain, n_clips + len(domains))
+            if c.clip_id not in excluded:
+                for clock in c.clocks:
+                    domains.setdefault(clock.domain, n_clips + len(domains))
     node_names = [c.clip_id for c in clips] + [f"clock:{d}" for d in domains]
     n_nodes = len(node_names)
 
@@ -213,26 +247,18 @@ def solve_placements(
         audio_reports.append((m, e, None))
 
     if use_clock:
-        by_domain: dict[str, list[ClipInput]] = defaultdict(list)
-        for c in clips:
-            if c.clock is not None and c.clip_id not in excluded:
-                by_domain[c.clock.domain].append(c)
-        for domain, members in by_domain.items():
-            starts = unwrap_midnight([c.clock.start_s for c in members])  # type: ignore[union-attr]
-            for c, start in zip(members, starts, strict=True):
-                clock = c.clock
-                assert clock is not None
-                edges.append(
-                    _Edge(
-                        i=domains[domain],
-                        j=index[c.clip_id],
-                        offset_s=start,
-                        sigma_s=clock.sigma_s or _default_clock_sigma(clock.source, params),
-                        kind=EdgeKind.CLOCK,
-                        confidence=_clock_confidence(clock.source, params),
-                        source=clock.source,
-                    )
+        for (clip_id, clock), start in clock_starts([c for c in clips if c.clip_id not in excluded]).items():
+            edges.append(
+                _Edge(
+                    i=domains[clock.domain],
+                    j=index[clip_id],
+                    offset_s=start,
+                    sigma_s=clock_sigma(clock, params),
+                    kind=EdgeKind.CLOCK,
+                    confidence=_clock_confidence(clock.source, params),
+                    source=clock.source,
                 )
+            )
 
     def anchor_for(nodes: list[int]) -> int:
         if ref_node in nodes:
@@ -332,8 +358,7 @@ def solve_placements(
             method, confidence = PlacementMethod.AUDIO, max(e.confidence for e in active_audio)
         elif active_clock:
             best = max(active_clock, key=lambda e: e.confidence)
-            method = PlacementMethod.METADATA if best.source == ClockSource.CREATION_TIME else PlacementMethod.TIMECODE
-            confidence = best.confidence
+            method, confidence = _CLOCK_METHOD[best.source], best.confidence  # type: ignore[index]
         else:  # tied to its group only through a manual constraint on another clip
             method, confidence = PlacementMethod.MANUAL, 1.0
 
@@ -522,18 +547,21 @@ def _ppm(rate: float) -> float:
     return 0.0 if abs(ppm) < 1e-9 else ppm
 
 
-def _default_clock_sigma(source: ClockSource, params: SolverParams) -> float:
+def _clock_confidence(source: ClockSource, params: SolverParams) -> float:
     return {
-        ClockSource.TIMECODE: params.timecode_sigma_s,
-        ClockSource.BWF: params.bwf_sigma_s,
-        ClockSource.CREATION_TIME: params.creation_time_sigma_s,
+        ClockSource.TIMECODE: params.timecode_confidence,
+        ClockSource.BWF: params.timecode_confidence,
+        ClockSource.CREATION_TIME: params.creation_time_confidence,
+        ClockSource.CHAPTER: params.chapter_confidence,
     }[source]
 
 
-def _clock_confidence(source: ClockSource, params: SolverParams) -> float:
-    if source == ClockSource.CREATION_TIME:
-        return params.creation_time_confidence
-    return params.timecode_confidence
+_CLOCK_METHOD = {
+    ClockSource.TIMECODE: PlacementMethod.TIMECODE,
+    ClockSource.BWF: PlacementMethod.TIMECODE,
+    ClockSource.CREATION_TIME: PlacementMethod.METADATA,
+    ClockSource.CHAPTER: PlacementMethod.CHAPTER,
+}
 
 
 def _edge_report(e: _Edge, names: list[str]) -> EdgeReport:

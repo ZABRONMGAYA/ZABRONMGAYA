@@ -64,6 +64,12 @@ class ClockSource(StrEnum):
     TIMECODE = "timecode"  # SMPTE timecode track (tmcd, MXF, ...)
     BWF = "bwf"  # Broadcast WAV bext time_reference
     CREATION_TIME = "creation_time"  # container creation date (1 s resolution)
+    CHAPTER = "chapter"  # position inside one recording split into files (GoPro chapters, 4 GB splits)
+
+    @property
+    def is_time_of_day(self) -> bool:
+        """Readings are seconds since midnight and wrap at 24 h."""
+        return self in (ClockSource.TIMECODE, ClockSource.BWF)
 
 
 class PlacementMethod(StrEnum):
@@ -71,6 +77,7 @@ class PlacementMethod(StrEnum):
     AUDIO = "audio"
     TIMECODE = "timecode"
     METADATA = "metadata"
+    CHAPTER = "chapter"
     MANUAL = "manual"
     NONE = "none"
 
@@ -214,8 +221,11 @@ class ClipInput:
     #: Camera/recorder identity. Clips from one device never overlap in time.
     device_id: str | None = None
     clock: ClockReading | None = None
+    #: Further readings of the clip start on other clocks (a clip can carry
+    #: timecode, its camera's creation time and a chapter position at once).
+    extra_clocks: tuple[ClockReading, ...] = ()
     #: Position of the first audio sample relative to the clip start (from the
-    #: container's stream start times). Usually 0.
+    #: container's stream start times). Usually 0; negative if audio starts first.
     audio_start_s: float = 0.0
 
     def __post_init__(self) -> None:
@@ -225,6 +235,13 @@ class ClipInput:
             self.duration_s = self.audio_start_s + self.audio.duration_s
         if self.duration_s <= 0:
             raise ValueError(f"clip {self.clip_id!r}: duration must be positive")
+        domains = [c.domain for c in self.clocks]
+        if len(set(domains)) != len(domains):
+            raise ValueError(f"clip {self.clip_id!r}: two clock readings in the same domain")
+
+    @property
+    def clocks(self) -> tuple[ClockReading, ...]:
+        return ((self.clock,) if self.clock is not None else ()) + tuple(self.extra_clocks)
 
 
 @dataclass(frozen=True)

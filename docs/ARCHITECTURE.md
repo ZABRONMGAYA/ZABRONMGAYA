@@ -73,8 +73,8 @@ engine/src/mcsync/
 │   ├── confidence.py  evidence → confidence → confident / uncertain / no match
 │   ├── solver.py      global drift-aware placement, clock domains, manual constraints
 │   └── engine.py      orchestration: pair selection, clock priors, analyze/solve
-├── testing/synthetic.py  synthetic scenes and device recordings with ground truth     [M1 ✅]
-├── media/             probe.py · extract.py · cache.py · fingerprint.py · devices.py · waveform.py   [M2]
+├── testing/           synthetic.py (scenes, recordings) · media.py (FFmpeg-generated shoots)   [M1–M2 ✅]
+├── media/             probe · riff · extract · cache · fingerprint · devices · waveform · library   [M2 ✅]
 ├── project/           schema.sql · db.py · migrations/ · repository.py                [M3]
 ├── service/           rpc.py · jobs.py · handlers.py · __main__.py                    [M3]
 ├── export/            timeline.py · xmeml.py · fcpxml.py                              [M5]
@@ -166,7 +166,7 @@ paths inside the cache directory.
 │   │   ├── features/          media-bin · sync-panel · timeline · review-queue · export
 │   │   └── components/        shared UI primitives
 │   └── e2e/                   Playwright-for-Electron tests
-├── fixtures/                  generated test media (ffmpeg lavfi) and golden XML files    [M2, M5]
+├── fixtures/                  golden XML files (test media is generated at test time)    [M5]
 └── .github/workflows/         engine-ci.yml [M1 ✅] · app-ci.yml [M4] · release.yml [M6]
 ```
 
@@ -211,7 +211,7 @@ paths inside the cache directory.
 | Synthetic property tests | Known offsets under randomised noise, reverb, EQ, gain, sample rate, drift; unrelated-audio rejection | `engine/tests/test_pairwise.py` [M1 ✅] |
 | Solver tests | Outliers, manual constraints, clock domains, drift model, detached groups | `engine/tests/test_solver.py` [M1 ✅] |
 | End-to-end engine tests | Wedding-style multicam shoots, hybrid timecode, interrupted clips | `engine/tests/test_engine.py` [M1 ✅] |
-| Media integration | Real containers generated with ffmpeg (`lavfi` sources, tmcd tracks, BWF, VFR, edit lists) | `fixtures/`, M2 |
+| Media integration | Real containers generated with FFmpeg (MOV/MP4/MTS/BWF, tmcd, drop-frame, chapters, delayed audio, truncation) | `engine/tests/test_media_*.py` [M2 ✅] |
 | Export golden files | xmeml/FCPXML diffed against reviewed references; schema validation | M5 |
 | NLE import checklist | Resolve and Premiere imports on every release candidate, per the matrix in the spec | M5/M6 |
 | UI end-to-end | Playwright for Electron: import → sync → review → export against a fixture project | M4 |

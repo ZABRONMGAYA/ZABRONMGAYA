@@ -25,8 +25,8 @@ from mcsync.sync import (
 from mcsync.sync.solver import audio_edge_sigma, unwrap_midnight
 
 
-def clip(cid, duration=100.0, clock=None, device=None):
-    return ClipInput(cid, duration_s=duration, clock=clock, device_id=device)
+def clip(cid, duration=100.0, clock=None, device=None, **kwargs):
+    return ClipInput(cid, duration_s=duration, clock=clock, device_id=device, **kwargs)
 
 
 def match(ref, tgt, offset, confidence=1.0, std_error=1e-4, drift_ppm=0.0, drift_std_ppm=float("inf"), time=0.0):
@@ -307,3 +307,60 @@ def test_unknown_reference_or_manual_clip_is_an_error():
         solve_placements(
             [clip("R")], [], reference_id="R", corrections=ManualCorrections(offsets=[ManualOffset("X", "R", 1.0)])
         )
+
+
+def test_chapter_continuation_places_a_silent_chapter_exactly():
+    """GoPro splits one recording into chapters with no gap between them."""
+    chapter = lambda offset: ClockReading(offset, domain="chapter:gopro:0042", source=ClockSource.CHAPTER)  # noqa: E731
+    clips = [
+        clip("R", 900.0),
+        clip("GH010042", 300.0, clock=chapter(0.0)),
+        clip("GH020042", 250.0, clock=chapter(300.0)),
+    ]
+    result = solve_placements(clips, [match("R", "GH010042", 50.0)], reference_id="R")
+    second = result.placements["GH020042"]
+    assert second.start_s == pytest.approx(350.0, abs=1e-6)
+    assert second.method == PlacementMethod.CHAPTER
+    assert second.status == PlacementStatus.SYNCED
+
+
+def test_a_clip_can_carry_several_clocks():
+    """Timecode is jam-synced across cameras; each camera also has its own creation-time clock."""
+
+    def clocks(tc, created):
+        return dict(
+            clock=ClockReading(tc, domain="tc:wall"),
+            extra_clocks=(ClockReading(created, domain="ct:camA", source=ClockSource.CREATION_TIME),),
+        )
+
+    clips = [
+        clip("R", 900.0, clock=ClockReading(36000.0, domain="tc:wall")),
+        clip("A1", **clocks(36100.0, 1.78e9)),
+        clip("A2", **clocks(36400.0, 1.78e9 + 300.0)),
+    ]
+    result = solve_placements(clips, [], reference_id="R")
+    assert result.placements["A2"].start_s == pytest.approx(400.0, abs=1e-6)
+    assert result.placements["A2"].method == PlacementMethod.TIMECODE  # the most trusted clock wins
+    with pytest.raises(ValueError):
+        ClipInput("bad", duration_s=1.0, clock=ClockReading(0.0, "x"), extra_clocks=(ClockReading(1.0, "x"),))
+
+
+def test_epoch_creation_times_keep_full_precision():
+    ct = lambda t: ClockReading(1_781_000_000.0 + t, domain="ct:camA", source=ClockSource.CREATION_TIME)  # noqa: E731
+    clips = [clip("R", 3600.0), clip("A1", clock=ct(0.0)), clip("A2", clock=ct(1234.5678))]
+    result = solve_placements(clips, [match("R", "A1", 100.0)], reference_id="R")
+    assert result.placements["A2"].start_s == pytest.approx(1334.5678, abs=1e-7)
+
+
+def test_clock_starts_unwraps_time_of_day_only():
+    from mcsync.sync.solver import clock_starts
+
+    tod = [clip(c, clock=ClockReading(v, "tc")) for c, v in (("a", 86000.0), ("b", 300.0))]
+    starts = clock_starts(tod)
+    assert starts[("b", tod[1].clock)] - starts[("a", tod[0].clock)] == pytest.approx(700.0)
+    epoch = [
+        clip(c, clock=ClockReading(v, "ct", source=ClockSource.CREATION_TIME))
+        for c, v in (("a", 1e9), ("b", 1e9 + 5e4))
+    ]
+    starts = clock_starts(epoch)
+    assert starts[("b", epoch[1].clock)] - starts[("a", epoch[0].clock)] == pytest.approx(5e4)

@@ -57,6 +57,13 @@ def _to_float(samples: np.ndarray) -> np.ndarray:
     return samples.astype(np.float32, copy=False)
 
 
+def band_filter(params: SyncParams = DEFAULT_PARAMS) -> np.ndarray:
+    """Second-order sections of the analysis band-pass (shared by the streaming extractor)."""
+    return sps.butter(
+        4, [params.band_low_hz, params.band_high_hz], btype="bandpass", fs=params.analysis_rate, output="sos"
+    )
+
+
 def prepare_signal(
     samples: np.ndarray,
     sample_rate: int,
@@ -89,8 +96,7 @@ def prepare_signal(
         ratio = Fraction(rate, int(sample_rate))
         x = sps.resample_poly(x, ratio.numerator, ratio.denominator).astype(np.float32)
 
-    sos = sps.butter(4, [params.band_low_hz, params.band_high_hz], btype="bandpass", fs=rate, output="sos")
-    y = sps.sosfilt(sos, x).astype(np.float32)
+    y = sps.sosfilt(band_filter(params), x).astype(np.float32)
 
     rms = float(np.sqrt(np.mean(np.square(y, dtype=np.float64)))) if len(y) else 0.0
     if rms > 1e-12:

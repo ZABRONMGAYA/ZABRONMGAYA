@@ -20,10 +20,10 @@ from typing import Protocol
 
 from .pairwise import estimate_offset
 from .params import DEFAULT_PARAMS, DEFAULT_SOLVER_PARAMS, SolverParams, SyncParams
-from .solver import solve_placements, unwrap_midnight
+from .solver import clock_sigma, clock_starts, solve_placements
 from .types import (
     ClipInput,
-    ClockSource,
+    ClockReading,
     Flag,
     ManualCorrections,
     MatchStatus,
@@ -181,8 +181,7 @@ class SyncEngine:
     def candidate_pairs(self, clips: Sequence[ClipInput]) -> list[_Pair]:
         """Pairs worth matching, with clock-derived search windows (hybrid mode)."""
         opts = self.options
-        use_clock = opts.mode == SyncMode.HYBRID
-        clock_start = _unwrapped_clock_starts(clips) if use_clock else {}
+        starts = clock_starts(clips) if opts.mode == SyncMode.HYBRID else {}
         audio_clips = [c for c in clips if c.audio is not None]
         pairs: list[_Pair] = []
         for i, ref in enumerate(audio_clips):
@@ -190,23 +189,32 @@ class SyncEngine:
                 if opts.skip_same_device_pairs and ref.device_id is not None and ref.device_id == tgt.device_id:
                     continue
                 window = None
-                if (
-                    ref.clock is not None
-                    and tgt.clock is not None
-                    and ref.clock.domain == tgt.clock.domain
-                    and ref.clip_id in clock_start
-                    and tgt.clip_id in clock_start
-                ):
-                    predicted = clock_start[tgt.clip_id] - clock_start[ref.clip_id]
-                    margin = opts.clock_search_margin_s + 3.0 * (
-                        _clock_sigma(ref, opts.solver) + _clock_sigma(tgt, opts.solver)
-                    )
+                prior = self._clock_prior(ref, tgt, starts)
+                if prior is not None:
+                    predicted, margin = prior
                     # The clocks say these clips cannot overlap: skip the pair.
                     if predicted > ref.duration_s + margin or predicted + tgt.duration_s < -margin:  # type: ignore[operator]
                         continue
                     window = (predicted - margin, predicted + margin)
                 pairs.append(_Pair(ref, tgt, window))
         return pairs
+
+    def _clock_prior(
+        self, ref: ClipInput, tgt: ClipInput, starts: dict[tuple[str, ClockReading], float]
+    ) -> tuple[float, float] | None:
+        """Predicted ``start(tgt) - start(ref)`` and its search half-width, from the
+        most precise clock domain both clips share (None if they share none)."""
+        solver = self.options.solver
+        tgt_clocks = {c.domain: c for c in tgt.clocks}
+        best: tuple[float, float] | None = None
+        for rc in ref.clocks:
+            tc = tgt_clocks.get(rc.domain)
+            if tc is None or (ref.clip_id, rc) not in starts or (tgt.clip_id, tc) not in starts:
+                continue
+            margin = self.options.clock_search_margin_s + 3.0 * (clock_sigma(rc, solver) + clock_sigma(tc, solver))
+            if best is None or margin < best[1]:
+                best = (starts[(tgt.clip_id, tc)] - starts[(ref.clip_id, rc)], margin)
+        return best
 
     def reference_id(self, clips: Sequence[ClipInput], excluded: set[str] | frozenset[str] = frozenset()) -> str:
         """The configured reference, else the longest non-excluded clip with audio."""
@@ -233,28 +241,6 @@ class SyncEngine:
         for c in clips:
             if c.audio is not None and c.audio.rate != rate:
                 raise ValueError(f"clip {c.clip_id!r} audio is at {c.audio.rate} Hz, expected {rate} Hz")
-
-
-def _clock_sigma(clip: ClipInput, solver: SolverParams) -> float:
-    clock = clip.clock
-    assert clock is not None
-    if clock.sigma_s is not None:
-        return clock.sigma_s
-    if clock.source == ClockSource.CREATION_TIME:
-        return solver.creation_time_sigma_s
-    return solver.bwf_sigma_s if clock.source == ClockSource.BWF else solver.timecode_sigma_s
-
-
-def _unwrapped_clock_starts(clips: Sequence[ClipInput]) -> dict[str, float]:
-    by_domain: dict[str, list[ClipInput]] = {}
-    for c in clips:
-        if c.clock is not None:
-            by_domain.setdefault(c.clock.domain, []).append(c)
-    out: dict[str, float] = {}
-    for members in by_domain.values():
-        starts = unwrap_midnight([c.clock.start_s for c in members])  # type: ignore[union-attr]
-        out.update({c.clip_id: s for c, s in zip(members, starts, strict=True)})
-    return out
 
 
 def _reverse(est: OffsetEstimate) -> OffsetEstimate:

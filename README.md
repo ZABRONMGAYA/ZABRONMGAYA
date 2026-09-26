@@ -15,8 +15,8 @@ audio, dozens of interrupted camera clips, mixed frame rates, drifting clocks.
 |---|---|
 | M0 Architecture and specifications | ✅ [docs/](docs/) |
 | M1 Synchronisation engine + automated tests | ✅ [engine/](engine/) |
-| M2 Media layer (ffprobe/ffmpeg, cache) | next |
-| M3 Persistence, engine service, CLI | planned |
+| M2 Media layer (ffprobe/ffmpeg, cache, devices) | ✅ [engine/src/mcsync/media](engine/src/mcsync/media) |
+| M3 Persistence, engine service, CLI | next |
 | M4 Desktop UI and timeline | planned |
 | M5 XML export (Resolve, Premiere) | planned |
 | M6 Hardening, packaging, beta | planned |

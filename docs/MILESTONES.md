@@ -9,8 +9,8 @@ Estimates assume one senior engineer; UI milestones parallelise well with a seco
 |---|---|---|---|
 | M0 | Architecture, specification, plan | 1 week | ✅ done |
 | M1 | Synchronisation engine + synthetic test suite | 2–3 weeks | ✅ done |
-| M2 | Media layer: probe, extract, cache, devices | 2–3 weeks | next |
-| M3 | Project persistence, engine service (JSON-RPC), CLI, parallelism | 2–3 weeks | |
+| M2 | Media layer: probe, extract, cache, devices | 2–3 weeks | ✅ done |
+| M3 | Project persistence, engine service (JSON-RPC), CLI, parallelism | 2–3 weeks | next |
 | M4 | Desktop shell and timeline UI | 4–6 weeks | |
 | M5 | XML export and NLE validation | 2–3 weeks | |
 | M6 | Hardening, packaging, beta | 3–4 weeks | |
@@ -46,29 +46,53 @@ Estimates assume one senior engineer; UI milestones parallelise well with a seco
 * A 3 h × 20 min match completes in under 2 s.
 * Manual re-solve completes in under 50 ms.
 
-## M2: Media layer
+## M2: Media layer ✅
 
-**Scope:**
+**Deliverables (in `engine/src/mcsync/media/`):**
 
-* `media/probe.py`: ffprobe → typed metadata. Covers rational rates, VFR detection, per-stream start times, timecode
-  from every source (tmcd, MXF, format and stream tags), BWF time reference, creation time, make/model/serial.
-* `media/extract.py`: streamed FFmpeg extraction to 8 kHz float32, cancellable and resumable, with per-channel
-  selection.
-* `media/cache.py`, `media/fingerprint.py`: cache layout, fingerprints, LRU eviction, memory-mapped signals.
-* `media/devices.py`: device identification and chapter detection (GoPro, 4 GB splits).
-* `media/waveform.py`: min/max peak pyramids.
-* `fixtures/`: small generated media (ffmpeg `lavfi` sine/noise and `testsrc`) covering MP4/MOV/MXF/MTS/WAV/BWF,
-  23.976/25/29.97 DF/59.94, tmcd tracks, VFR, edit lists, multichannel, silence.
+* `tools.py`: locates FFmpeg (bundled directory via `MCSYNC_FFMPEG_DIR`, next to a frozen engine, or `PATH`); no
+  console windows on Windows.
+* `probe.py`: ffprobe → typed metadata:
+  * exact rational frame rates and VFR detection;
+  * per-stream start times → clip origin and `audio_start_s`;
+  * timecode from tmcd tracks, stream tags and container tags (MXF), plus BWF time references;
+  * creation time, including Apple's local-offset form, with unset 1904/1970 clocks rejected;
+  * make/model/serial from QuickTime tags, GoPro/DJI handlers, MXF identification, BWF originator and Sony XML
+    sidecars.
+* `riff.py`: bext and iXML read directly from WAV/RF64 chunks (timecode rate, drop-frame flag, project, scene, take,
+  track names).
+* `extract.py`: streaming FFmpeg decode to the 8 kHz analysis signal, with a chunked band-pass carrying filter state
+  and in-place normalisation. Memory use is flat. Cancellable, atomic (temp directory + rename), channel selection,
+  explicit channel averaging.
+* `cache.py`, `fingerprint.py`: content fingerprints (size + first/last MiB), versioned cache layout, memory-mapped
+  loading, LRU eviction that never touches entries in use.
+* `waveform.py`: μ-law min/max peak pyramids (6 zoom levels), built during extraction.
+* `devices.py`:
+  * device identity (serial → make/model + card → file-name family → folder);
+  * GoPro chapter and 4 GB split detection;
+  * **rec-run timecode detection**: timecode that only advances while recording is not used as a clock.
+* `library.py`: scan → extract → `ClipInput`s carrying every clock: timecode per device or per jam-synced rate
+  family, creation time per device, chapter position per take.
+* **Engine additions:**
+  * several clock readings per clip;
+  * chapter clocks (placement method `chapter`);
+  * per-domain normalisation of epoch-sized readings, keeping solver precision.
+* `mcsync.testing.media`: generates real media with FFmpeg: a BWF recorder, a 23.976 MOV with timecode (interrupted),
+  a 29.97 DF MP4 with delayed audio, an AVCHD MTS, GoPro chapters (one muted), and a drone without audio.
 
-**Exit criteria:**
+**Exit criteria (met):**
 
-* An integration test runs `ffmpeg`-generated multicam files end-to-end through probe → extract → sync and places them
-  within 1 ms of ground truth.
-* Every metadata field in the spec is covered by a fixture.
-* Extraction runs at ≥ 50× real time per core.
+* On FFmpeg-generated files, probe → extract → sync places audio-matched clips within 0.011 ms of ground truth.
+  One file is off by 0.66 ms, because FFmpeg decodes that file's AAC priming frame. The muted GoPro chapter is placed
+  exactly by chapter continuity, and the drone within one frame by timecode.
+* Extraction is about 400× real time; the 16-minute test shoot extracts in 2.5 s. FFmpeg's resampling and the
+  in-memory path agree to 0.0 µs.
+* Metadata is covered by generated media or by captured ffprobe JSON in the unit tests. The exceptions are real
+  vendor files: MXF from Sony/Canon bodies, iPhone VFR and Sony XAVC sidecars are exercised through parsed samples,
+  not real files. Collecting real files is part of the M6 beta.
 
-**Risks:** vendor-specific timecode and metadata quirks. Mitigation: store raw ffprobe JSON and build a corpus of real
-camera files from beta users.
+**Not done, deliberately:** resuming a half-extracted file (an interrupted extraction restarts that file; files take
+seconds); XAVC LTC change tables in sidecars (tmcd tracks cover those cameras).
 
 ## M3: Project persistence and engine service
 

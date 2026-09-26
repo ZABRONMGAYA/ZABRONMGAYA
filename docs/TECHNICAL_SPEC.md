@@ -78,16 +78,26 @@ guarantees they are gapless. That removes spurious gaps.
 ## 4. Audio extraction and cache
 
 ```
-ffmpeg -nostdin -v error -i <media> -map 0:a:<k> -vn -ac 1 \
-       -af aresample=resampler=soxr:osr=8000 -f f32le -     # streamed in 1 MiB chunks
+ffmpeg -nostdin -v error -i <media> -map 0:<stream> -vn -sn -dn \
+       -af "pan=mono|c0=0.5*c0+0.5*c1,aresample=async=1" -ar 8000 -ac 1 -f f32le pipe:1
 ```
 
-* Output streams into `<cache>/<fingerprint>/<stream>/pcm_8000.f32` (temp file + rename), which is memory-mapped for
-  analysis. `ac 1` downmixes; per-channel analysis uses `-af pan=mono|c0=c<n>` instead.
-* Stream start offsets are preserved: `audio_start_s` comes from ffprobe and the extracted PCM starts at the stream's
-  first sample. The engine converts audio offsets to clip offsets.
-* **Fingerprint:** SHA-1 of the size, mtime and the first and last MiB. Cache entries are keyed by fingerprint, stream,
-  and a hash of the analysis parameters. Moving or renaming media keeps its cache; editing it invalidates it.
+(Implemented in `media/extract.py`, M2.)
+
+* **Downmix:** channels are averaged explicitly. FFmpeg's own `-ac 1` scales stereo by 1/√2, which would make levels
+  3 dB different from the in-memory path. `pan=mono|c0=c<n>` selects a single channel instead.
+* **Timing:** `aresample=async=1` fills timestamp gaps with silence, so sample *n* is always *n*/8000 s after the
+  stream's first sample. Stream start offsets come from ffprobe: the PCM starts at the stream's first sample, and
+  `audio_start_s` places it relative to the clip's first frame.
+* **Streaming:** the engine reads 1 MiB chunks, band-passes them (filter state carried across chunks), builds the
+  waveform overview, and writes a temporary cache entry that is normalised in place and then renamed. FFmpeg's
+  resampler and the engine's own agree to within a microsecond.
+* **AAC priming:** FFmpeg skips encoder priming when the MP4 edit list says so, which is the normal case. A file whose
+  edit list starts with an empty edit is decoded including its priming frame (about 1 ms apart in the tests). That is
+  how the file actually plays, so it is left as is.
+* **Fingerprint:** SHA-1 of the size and the first and last MiB. Cache entries are keyed by fingerprint, stream,
+  channel, and a hash of the analysis parameters. Moving, renaming or copying media keeps its cache; editing it
+  invalidates it.
 * **Waveform pyramid:** min/max peaks at 64·2ⁿ samples per bin, written as int8 arrays next to the PCM and served to
   the renderer through `mcsync-cache://`.
 * **Budget:** 8 kHz float32 is 115 MB per hour of audio. The cache location is the OS cache directory (overridable),
@@ -101,12 +111,23 @@ Implemented in `engine/src/mcsync/timecode.py` (M1).
 * **Drop-frame** (29.97, 59.94, 119.88): skips 2 (or 4, or 8) labels per minute except each tenth minute. Labels that
   do not exist (`00:01:00;00`) are rejected. `01:00:00;00` at 29.97 DF is 107 892 frames = 3599.9964 s.
 * **Wrap at 24 h:** readings of one clock spanning over 12 h are unwrapped; receptions run past midnight.
-* **BWF:** `time_reference / sample_rate` = seconds since midnight.
-* **Clock readings** passed to the engine: `start_s`, `domain`, `source`, `sigma_s`.
-  * Timecode σ is one frame, BWF σ is 20 ms, creation time σ is 1 s.
-  * **Domains:** all timecode-bearing clips share one domain when the user confirms "timecode is jam-synced"
-    (default when every device has timecode that agrees within a minute). Otherwise each device is its own domain.
-    Creation time is always per device, since camera clocks are set by hand (often to the wrong time zone).
+* **BWF:** `time_reference / sample_rate` = seconds since midnight. The iXML chunk (read directly, since ffprobe does
+  not expose it) supplies the recorder's timecode rate and drop-frame flag.
+* **Timecode families:** a reading's seconds are `frames / rate`, the real time since the label 00:00:00:00.
+  Non-drop NTSC timecode (23.976, 29.97 NDF) runs 0.1 % slower than the wall clock (3.6 s per hour), while drop-frame
+  and integer rates track it. Readings are only compared within one family, `ntsc` or `wall`.
+* **Rec-run timecode:** many camcorders advance timecode only while recording, so consecutive takes look contiguous
+  whatever the pause between them. When every pair of consecutive takes of a device (chapters excluded) is contiguous
+  to within two frames, that device's timecode is not used as a clock (M2, `devices.is_record_run`).
+* **Clock readings** passed to the engine: `start_s`, `domain`, `source`, `sigma_s`. A clip can carry several.
+  * Timecode σ is one frame, BWF σ is 20 ms, creation time σ is 1 s, chapter position σ is 2 ms.
+  * **Timecode domains:** `tc:<family>` shared by every device when the project says timecode is jam-synced;
+    otherwise `tc:<device>:<family>` (still orders one device's takes).
+  * **Creation time:** always per device (`ct:<device>`), since camera clocks are set by hand (often to the wrong
+    time zone). Known gap: some devices stamp the *end* of recording. Per-device detection (start vs end, using the
+    audio-synced clips) is planned for M3.
+  * **Chapters:** `chapter:<take>` with each file's offset inside the take: exact, because cameras split takes
+    without gaps.
 
 ## 6. Timeline model
 

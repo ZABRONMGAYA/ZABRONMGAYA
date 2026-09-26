@@ -106,9 +106,11 @@ class SolverParams:
     timecode_sigma_s: float = 0.04
     bwf_sigma_s: float = 0.02
     creation_time_sigma_s: float = 1.0
+    chapter_sigma_s: float = 0.002
     #: Placement confidence reported for clips placed only through a clock.
     timecode_confidence: float = 0.9
     creation_time_confidence: float = 0.3
+    chapter_confidence: float = 0.95
     confident_threshold: float = 0.7
 
 
