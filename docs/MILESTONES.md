@@ -246,6 +246,12 @@ so a fix stays local, and NLE-derived golden files once real exports are availab
   the packaged app before uploading it. Tags and manual runs collect the installers into a draft release.
 * The engine keeps the protocol pipes to itself (see `service/app.py`, `_claim_stdio`). Child processes get the null
   device and stderr, which fixed a Windows hang where the matcher pool never started.
+* **Verified in CI:** all three installers (Windows x64 162 MB, macOS arm64 161 MB, macOS x64 174 MB) build and
+  pass the full end-to-end suite against the packaged app: import, sync against the truth, review, drag, undo,
+  snap, export, reopen. Build times: macOS about 4 minutes, Windows about 13 (FFmpeg cached per recipe).
+
+**Still open:** signed and notarised builds (needs a Developer ID and a code-signing certificate), clean-install
+checks on real macOS 12+ and Windows 10/11 machines, the NLE import matrix (M5), crash reporting, and the beta.
 
 **Scope:**
 
