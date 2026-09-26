@@ -109,8 +109,6 @@ def test_full_pipeline_places_every_file(shoot, scanned):
         assert (p.status, p.method) == (PlacementStatus.SYNCED, PlacementMethod.AUDIO), rel
         assert p.start_s == pytest.approx(shoot.expected(rel), abs=AUDIO_TOL), rel
 
-    # FFmpeg decodes this -itsoffset file including its AAC priming frame, so its
-    # true in-file audio/video offset is ~0.7 ms from the intended 0.25 s.
     cam_b = placements["CAM_B/C0001.MP4"]
     assert cam_b.status == PlacementStatus.SYNCED
     assert cam_b.start_s == pytest.approx(shoot.expected("CAM_B/C0001.MP4"), abs=AUDIO_TOL)
@@ -142,11 +140,53 @@ def test_clip_clocks(shoot, scanned):
     assert [c.source for c in recorder.clocks] == [ClockSource.BWF]
     chapter = clips[shoot.path("GOPRO/DCIM/100GOPRO/GH020042.MP4")]
     assert any(c.source == ClockSource.CHAPTER and c.start_s > 0 for c in chapter.clocks)
-    # Extraction pads delayed audio from the container start, so the audio starts with the clip.
     assert clips[shoot.path("CAM_B/C0001.MP4")].audio_start_s == 0.0
     assert clips[shoot.path("CAM_C/PRIVATE/AVCHD/BDMV/STREAM/00001.MTS")].audio_start_s == pytest.approx(
         -0.0053, abs=1e-3
     )
+
+
+def decoded_audio_delay(path: Path, pcm: np.ndarray, rate: int = 48000) -> float:
+    """Where FFmpeg's decoder puts the first sample of ``pcm`` in the file's audio (s after the container start)."""
+    import subprocess
+
+    raw = subprocess.run(
+        ["ffmpeg", "-v", "error", "-i", str(path), "-map", "0:a", "-af", "aresample=async=1:first_pts=0",
+         "-ar", str(rate), "-ac", "1", "-f", "f32le", "-"],
+        capture_output=True, check=True,
+    ).stdout  # fmt: skip
+    decoded = np.frombuffer(raw, dtype="<f4")[: rate * 2]
+    probe_len = rate // 10
+    corr = np.correlate(decoded, pcm[:probe_len], mode="valid")
+    return float(np.argmax(np.abs(corr))) / rate
+
+
+def test_mp4_edit_list_delay_is_placed_where_ffmpeg_decodes_it(tmp_path):
+    """An MP4 whose audio track starts 0.25 s after its video, through an edit list.
+
+    Muxers and demuxers disagree about such edit lists (FFmpeg 6/7 and 8 behave
+    differently), so the ground truth is where the bundled decoder presents the
+    audio. The engine must place the clip exactly there: its audio is analysed
+    from the container start, whatever the stream metadata claims.
+    """
+    scene = make_scene(200.0, kind="speech", rate=16000, seed=12)
+    (tmp_path / "REC").mkdir()
+    (tmp_path / "CAM").mkdir()
+    write_bwf(tmp_path / "REC" / "rec.wav", scene, 10.0, 180.0, seed=1)
+    video_start, delay = 60.0, 0.25
+    write_camera_clip(tmp_path / "CAM" / "C0001.MP4", scene, video_start, 60.0, audio_delay_s=delay, snr_db=20, seed=7)
+    pcm = record(scene, start_s=video_start + delay, duration_s=60.0 - delay, rate=48000, snr_db=20, seed=7)
+    decoded_delay = decoded_audio_delay(tmp_path / "CAM" / "C0001.MP4", pcm)
+    assert 0.0 <= decoded_delay <= 0.3
+
+    items, _ = scan_media([tmp_path])
+    extract_audio(items, AnalysisCache(tmp_path / "cache"))
+    clips = build_clip_inputs(items)
+    ref = next(c.clip_id for c in clips if c.clip_id.endswith("rec.wav"))
+    cam = next(c.clip_id for c in clips if c.clip_id.endswith("C0001.MP4"))
+    placement = SyncEngine(SyncOptions(reference_clip_id=ref)).run(clips).placements[cam]
+    # The audio heard at clip time `decoded_delay` is scene time `video_start + delay`.
+    assert placement.start_s == pytest.approx(video_start + delay - decoded_delay - 10.0, abs=AUDIO_TOL)
 
 
 def test_rec_run_timecode_is_not_used_as_a_clock(tmp_path):

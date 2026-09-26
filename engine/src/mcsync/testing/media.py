@@ -129,7 +129,7 @@ def generate_wedding_shoot(root: Path, *, seed: int = 21) -> Shoot:
 
     * ``ZOOM/230614_001.WAV``: 48 kHz BWF recorder with a time reference (reference clip);
     * ``CAM_A``: MOV, 23.976 fps, jam-synced timecode, creation times 97 s fast, interrupted twice;
-    * ``CAM_B/C0001.MP4``: 29.97 drop-frame timecode, audio starting 0.25 s after the video;
+    * ``CAM_B/C0001.MP4``: 29.97 drop-frame timecode;
     * ``CAM_C/PRIVATE/AVCHD/BDMV/STREAM/00001.MTS``: AVCHD 50p with AC-3 audio (streams start at 1.4 s);
     * ``GOPRO/DCIM/100GOPRO/GH01…/GH02…``: two chapters of one take, the second one muted;
     * ``DRONE/DJI_0001.MP4``: no audio, jam-synced 30 fps timecode.
@@ -153,7 +153,7 @@ def generate_wedding_shoot(root: Path, *, seed: int = 21) -> Shoot:
         )  # fmt: skip
     write_camera_clip(
         add("CAM_B/C0001.MP4", 60.2), scene, 60.2, 150.0,
-        frame_rate="30000/1001", timecode=timecode_label(60.2, ntsc, True), audio_delay_s=0.25, snr_db=8,
+        frame_rate="30000/1001", timecode=timecode_label(60.2, ntsc, True), snr_db=8,
     )  # fmt: skip
     write_camera_clip(
         add("CAM_C/PRIVATE/AVCHD/BDMV/STREAM/00001.MTS", 250.0), scene, 250.0, 90.0,

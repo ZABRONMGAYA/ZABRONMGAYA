@@ -94,9 +94,9 @@ ffmpeg -nostdin -v error -i <media> -map 0:<stream> -vn -sn -dn \
 * **Streaming:** the engine reads 1 MiB chunks, band-passes them (filter state carried across chunks), builds the
   waveform overview, and writes a temporary cache entry that is normalised in place and then renamed. FFmpeg's
   resampler and the engine's own agree to within a microsecond.
-* **AAC priming:** FFmpeg skips encoder priming when the MP4 edit list says so, which is the normal case. A file whose
-  edit list starts with an empty edit is decoded including its priming frame (about 1 ms apart in the tests). That is
-  how the file actually plays, so it is left as is.
+* **Edit lists:** FFmpeg skips AAC encoder priming when the MP4 edit list says so, which is the normal case. Delays
+  expressed as empty edits are interpreted differently by FFmpeg 6/7 and 8. Audio is placed where the bundled decoder
+  presents it, so the app ships one pinned FFmpeg build (M6), and such files are part of the NLE validation matrix.
 * **Fingerprint:** SHA-1 of the size and the first and last MiB. Cache entries are keyed by fingerprint, stream,
   channel, and a hash of the analysis parameters. Moving, renaming or copying media keeps its cache; editing it
   invalidates it.

@@ -83,8 +83,10 @@ Estimates assume one senior engineer; UI milestones parallelise well with a seco
 **Exit criteria (met):**
 
 * On FFmpeg-generated files, probe → extract → sync places audio-matched clips within 0.011 ms of ground truth.
-  One file is off by 0.66 ms, because FFmpeg decodes that file's AAC priming frame. The muted GoPro chapter is placed
-  exactly by chapter continuity, and the drone within one frame by timecode.
+  The muted GoPro chapter is placed exactly by chapter continuity, and the drone within one frame by timecode.
+* An MP4 whose audio is delayed through an edit list is placed exactly where FFmpeg decodes its audio. FFmpeg 6/7 and
+  8 disagree about such edit lists (found in CI), so the app must bundle one pinned FFmpeg build (M6), and the NLE
+  validation matrix includes such a file.
 * Extraction is about 400× real time; the 16-minute test shoot extracts in 2.5 s. FFmpeg's resampling and the
   in-memory path agree to 0.0 µs.
 * Metadata is covered by generated media or by captured ffprobe JSON in the unit tests. The exceptions are real
