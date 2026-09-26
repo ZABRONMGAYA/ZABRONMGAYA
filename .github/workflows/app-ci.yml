@@ -1,0 +1,63 @@
+name: app
+
+on:
+  push:
+    paths: ["app/**", "engine/src/**", ".github/workflows/app-ci.yml"]
+  pull_request:
+    paths: ["app/**", "engine/src/**", ".github/workflows/app-ci.yml"]
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: engine/pyproject.toml
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - name: Install FFmpeg
+        shell: bash
+        run: |
+          case "$RUNNER_OS" in
+            Linux) sudo apt-get update -q && sudo apt-get install -y -q ffmpeg xvfb ;;
+            macOS) brew install ffmpeg ;;
+            Windows) choco install ffmpeg -y --no-progress ;;
+          esac
+          ffmpeg -hide_banner -version | head -1
+      - name: Install the engine (the app runs it from source in development)
+        run: python -m pip install -e ../engine
+      - run: npm ci
+      - run: npx install-electron
+      - run: npm run format:check
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - name: End-to-end tests (real app, real engine)
+        shell: bash
+        env:
+          MCSYNC_PYTHON: python
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            xvfb-run -a -s "-screen 0 1920x1080x24" npm run e2e
+          else
+            npm run e2e
+          fi
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screens-${{ matrix.os }}
+          path: app/test-results/
+          if-no-files-found: ignore

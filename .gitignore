@@ -12,6 +12,9 @@ dist/
 node_modules/
 app/out/
 app/release/
+app/dist-electron/
+app/test-results/
+app/playwright-report/
 
 # Project files and caches created while testing
 *.mcsync

@@ -9,6 +9,8 @@ audio, dozens of interrupted camera clips, mixed frame rates, drifting clocks.
 
 **Stack:** Python (NumPy, SciPy) engine · FFmpeg · SQLite · Electron + React desktop shell.
 
+![The timeline after synchronising a generated wedding shoot](docs/images/timeline.png)
+
 ## Status
 
 | Milestone | State |
@@ -17,8 +19,8 @@ audio, dozens of interrupted camera clips, mixed frame rates, drifting clocks.
 | M1 Synchronisation engine + automated tests | ✅ [engine/](engine/) |
 | M2 Media layer (ffprobe/ffmpeg, cache, devices) | ✅ [engine/src/mcsync/media](engine/src/mcsync/media) |
 | M3 Persistence, JSON-RPC service, CLI, parallel matching | ✅ [engine/src/mcsync/service](engine/src/mcsync/service) |
-| M4 Desktop UI and timeline | next |
-| M5 XML export (Resolve, Premiere) | planned |
+| M4 Desktop UI and timeline | ✅ [app/](app/) |
+| M5 XML export (Resolve, Premiere) | next |
 | M6 Hardening, packaging, beta | planned |
 
 ## Documentation
@@ -53,4 +55,19 @@ clips = [
 result = SyncEngine(SyncOptions(reference_clip_id="recorder")).run(clips)
 placement = result.placements["camA_0001"]
 placement.start_s, placement.status, placement.confidence, placement.flags
+```
+
+## Desktop app quick start
+
+Needs Node.js 22.12 or newer, Python 3.11 or newer, and FFmpeg on `PATH`. Installers arrive in M6.
+
+```bash
+python -m pip install -e engine           # the app runs the engine from source during development
+cd app
+npm ci
+npm start                                 # build and launch
+npm run dev                               # or: hot-reloading renderer
+
+npm run typecheck && npm test             # unit tests
+npm run build && npm run e2e              # the real app end to end (see app/e2e/README.md)
 ```

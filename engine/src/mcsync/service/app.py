@@ -78,7 +78,7 @@ class EngineService:
             "project.create", "project.open", "project.close", "project.info", "project.update_settings",
             "media.import", "media.list", "media.remove",
             "device.update", "clip.assign_device", "clip.set_audio",
-            "sync.run", "sync.solve", "sync.snap",
+            "sync.run", "sync.solve", "sync.snap", "sync.matches",
             "correction.add", "correction.undo", "correction.redo", "correction.list",
             "timeline.get", "waveform.info",
             "job.cancel", "job.list",
@@ -413,6 +413,36 @@ class EngineService:
             "flags": [f.value for f in match.all_flags],
             "alternatives": to_jsonable(match.alternatives),
         }
+
+    def sync_matches(self, clip_id: int) -> list[dict]:
+        """The last run's audio matches involving a clip, from that clip's point of view."""
+        project = self._require_project()
+        run_id = project.last_completed_run()
+        if run_id is None:
+            return []
+        names = {r.id: r.name for r in project.clips()}
+        rejected = project.corrections().rejected_pairs
+        me = str(clip_id)
+        out = []
+        for m in project.run_matches(run_id):
+            if me not in (m.ref_id, m.tgt_id) or m.status.value == "no_match":
+                continue
+            other = m.tgt_id if m.ref_id == me else m.ref_id
+            offset = m.offset_s
+            if offset is not None and m.ref_id == me:
+                offset = -offset  # start(me) - start(other)
+            drift = m.estimate.drift_ppm if m.tgt_id == me else -m.estimate.drift_ppm
+            out.append({
+                "other_clip_id": int(other),
+                "other_name": names.get(int(other), other),
+                "offset_s": offset,
+                "confidence": m.confidence,
+                "status": m.status.value,
+                "flags": [f.value for f in m.all_flags],
+                "drift_ppm": drift or 0.0,
+                "rejected": frozenset((m.ref_id, m.tgt_id)) in rejected,
+            })  # fmt: skip
+        return sorted(out, key=lambda d: -d["confidence"])
 
     # ----------------------------------------------------------- corrections
 

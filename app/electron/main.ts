@@ -1,0 +1,195 @@
+// Electron main process: window, menus, dialogs, and the engine child process.
+// It holds no business logic: renderer calls go to the engine unchanged (allow-listed).
+import { promises as fs } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { BrowserWindow, Menu, app, dialog, ipcMain, shell } from "electron";
+
+import {
+  ENGINE_METHODS,
+  type EngineEvent,
+  type InvokeResponse,
+  type MenuCommand,
+  type Method,
+} from "../src/api/contract";
+import { EngineProcess, RpcError, engineCommand } from "./engine";
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const allowed = new Set<string>(ENGINE_METHODS);
+const PROJECT_FILTER = { name: "Multicam Sync project", extensions: ["mcsync"] };
+
+if (process.env.MCSYNC_NO_SANDBOX === "1") {
+  app.commandLine.appendSwitch("no-sandbox"); // CI containers running as root
+}
+if (process.env.MCSYNC_USER_DATA) {
+  app.setPath("userData", process.env.MCSYNC_USER_DATA); // isolated settings for tests
+}
+
+const engine = new EngineProcess(() =>
+  engineCommand({ packaged: app.isPackaged, resourcesPath: process.resourcesPath }),
+);
+let window: BrowserWindow | null = null;
+
+function send(event: EngineEvent): void {
+  window?.webContents.send("engine:event", event);
+}
+
+engine.on("event", (event: EngineEvent) => send(event));
+engine.on("status", (status) => send({ method: "engine.status", params: status }));
+
+function createWindow(): BrowserWindow {
+  const win = new BrowserWindow({
+    width: 1440,
+    height: 900,
+    minWidth: 1024,
+    minHeight: 640,
+    backgroundColor: "#15171a",
+    title: "Multicam Sync",
+    show: false,
+    webPreferences: {
+      preload: path.join(here, "preload.cjs"),
+      contextIsolation: true,
+      sandbox: true,
+      nodeIntegration: false,
+      spellcheck: false,
+    },
+  });
+  win.once("ready-to-show", () => win.show());
+  // The renderer is a local app: no navigation away from it, links open in the browser.
+  win.webContents.on("will-navigate", (e) => e.preventDefault());
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith("https://")) void shell.openExternal(url);
+    return { action: "deny" };
+  });
+  if (process.env.MCSYNC_RENDERER_URL) void win.loadURL(process.env.MCSYNC_RENDERER_URL);
+  else void win.loadFile(path.join(here, "..", "dist", "index.html"));
+  return win;
+}
+
+function menuCommand(command: MenuCommand) {
+  return () => send({ method: "menu", params: { command } });
+}
+
+function buildMenu(): void {
+  const isMac = process.platform === "darwin";
+  const template: Electron.MenuItemConstructorOptions[] = [
+    ...(isMac ? [{ role: "appMenu" as const }] : []),
+    {
+      label: "File",
+      submenu: [
+        { label: "New Project…", accelerator: "CmdOrCtrl+N", click: menuCommand("new-project") },
+        { label: "Open Project…", accelerator: "CmdOrCtrl+O", click: menuCommand("open-project") },
+        { type: "separator" },
+        { label: "Import Files…", accelerator: "CmdOrCtrl+I", click: menuCommand("import-files") },
+        { label: "Import Folder…", accelerator: "CmdOrCtrl+Shift+I", click: menuCommand("import-folder") },
+        { type: "separator" },
+        { label: "Close Project", accelerator: "CmdOrCtrl+W", click: menuCommand("close-project") },
+        ...(isMac ? [] : [{ type: "separator" as const }, { role: "quit" as const }]),
+      ],
+    },
+    {
+      label: "Edit",
+      submenu: [
+        // Text fields keep native undo; elsewhere these undo timeline corrections.
+        { label: "Undo", accelerator: "CmdOrCtrl+Z", click: menuCommand("undo") },
+        { label: "Redo", accelerator: "CmdOrCtrl+Shift+Z", click: menuCommand("redo") },
+        { type: "separator" },
+        { role: "cut" },
+        { role: "copy" },
+        { role: "paste" },
+        { role: "selectAll" },
+      ],
+    },
+    {
+      label: "Sync",
+      submenu: [{ label: "Synchronise", accelerator: "CmdOrCtrl+Enter", click: menuCommand("sync") }],
+    },
+    {
+      label: "View",
+      submenu: [
+        { label: "Zoom In", accelerator: "CmdOrCtrl+=", click: menuCommand("zoom-in") },
+        { label: "Zoom Out", accelerator: "CmdOrCtrl+-", click: menuCommand("zoom-out") },
+        { label: "Zoom to Fit", accelerator: "CmdOrCtrl+0", click: menuCommand("zoom-fit") },
+        { type: "separator" },
+        { role: "toggleDevTools" },
+        { role: "togglefullscreen" },
+      ],
+    },
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
+function registerIpc(): void {
+  ipcMain.handle("engine:invoke", async (_e, method: string, params: unknown): Promise<InvokeResponse<unknown>> => {
+    if (!allowed.has(method)) return { ok: false, error: { code: -32601, message: `not allowed: ${method}` } };
+    try {
+      return { ok: true, result: await engine.request(method as Method, params ?? {}) };
+    } catch (err) {
+      const e = err instanceof RpcError ? err : new RpcError(-32603, String(err));
+      return { ok: false, error: { code: e.code, message: e.message } };
+    }
+  });
+  ipcMain.handle("engine:status", () => engine.status);
+  ipcMain.handle("dialog:media", async (_e, kind: "files" | "folder") => {
+    const result = await dialog.showOpenDialog(window!, {
+      title: kind === "folder" ? "Import a folder of footage" : "Import media files",
+      properties: kind === "folder" ? ["openDirectory", "multiSelections"] : ["openFile", "multiSelections"],
+    });
+    return result.canceled ? [] : result.filePaths;
+  });
+  ipcMain.handle("dialog:open-project", async () => {
+    const result = await dialog.showOpenDialog(window!, { properties: ["openFile"], filters: [PROJECT_FILTER] });
+    return result.canceled ? null : (result.filePaths[0] ?? null);
+  });
+  ipcMain.handle("dialog:create-project", async (_e, defaultName: string) => {
+    const result = await dialog.showSaveDialog(window!, {
+      title: "New project",
+      defaultPath: `${defaultName}.mcsync`,
+      filters: [PROJECT_FILTER],
+    });
+    return result.canceled || !result.filePath ? null : result.filePath;
+  });
+  // Waveform overviews live in the engine's cache; only files inside it can be read.
+  ipcMain.handle("peaks:read", async (_e, directory: string, file: string, offset: number, length: number) => {
+    const cacheDir = engine.status.hello?.cache_dir;
+    if (!cacheDir) throw new Error("engine not ready");
+    const root = path.resolve(cacheDir) + path.sep;
+    const full = path.resolve(directory, file);
+    if (!full.startsWith(root) || !/^peaks_\d+\.i8$/.test(file)) throw new Error("path outside the cache");
+    const handle = await fs.open(full, "r");
+    try {
+      const buffer = Buffer.alloc(Math.max(0, Math.min(length, 64 * 1024 * 1024)));
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, offset);
+      return new Uint8Array(buffer.buffer, buffer.byteOffset, bytesRead);
+    } finally {
+      await handle.close();
+    }
+  });
+}
+
+app.whenReady().then(async () => {
+  registerIpc();
+  buildMenu();
+  window = createWindow();
+  window.on("closed", () => {
+    window = null;
+  });
+  try {
+    await engine.start();
+  } catch {
+    // Status (with the engine's error output) has been sent to the renderer.
+  }
+});
+
+let quitting = false;
+app.on("before-quit", (event) => {
+  if (quitting) return;
+  event.preventDefault();
+  quitting = true;
+  void engine.stop().finally(() => app.quit());
+});
+
+app.on("window-all-closed", () => {
+  app.quit();
+});

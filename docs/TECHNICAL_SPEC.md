@@ -20,12 +20,12 @@ Workflow: **import** folders/cards → **sync** (one click) → **review** the f
 
 | # | Requirement | Design | Milestone |
 |---|---|---|---|
-| R1 | Import multiple video and audio files | Folder/file import with recursive scan, parallel ffprobe, device grouping (§4) | M2 (engine), M4 (UI) |
+| R1 | Import multiple video and audio files | Folder/file import with recursive scan, parallel ffprobe, device grouping (§4) | **M2 ✅** (engine), **M4 ✅** (UI) |
 | R2 | Extract audio and read media metadata | ffprobe metadata model (§3), FFmpeg extraction to an 8 kHz analysis cache (§4) | M2 |
 | R3 | Synchronise by audio waveform cross-correlation | Coarse envelope correlation + windowed GCC-PHAT verification ([SYNC_ENGINE §3–5](SYNC_ENGINE.md)) | **M1 ✅** |
 | R4 | Timecode-based sync where available | Timecode maths (§5), clock domains in the solver, hybrid/timecode modes ([SYNC_ENGINE §7–8](SYNC_ENGINE.md)) | **M1 ✅** (engine), M2 (metadata) |
-| R5 | Detect uncertain matches; allow manual corrections | Confidence model and flags; review queue; manual offsets, rejections, exclusions, snap-to-audio (§7) | **M1 ✅** (engine), M4 (UI) |
-| R6 | Display synchronised camera tracks on a timeline | Timeline model (§6), canvas timeline with waveform peaks | M4 |
+| R5 | Detect uncertain matches; allow manual corrections | Confidence model and flags; review queue; manual offsets, rejections, exclusions, snap-to-audio (§7) | **M1 ✅** (engine), **M4 ✅** (UI) |
+| R6 | Display synchronised camera tracks on a timeline | Timeline model (§6), canvas timeline with waveform peaks | **M4 ✅** |
 | R7 | Export XML for DaVinci Resolve and Premiere Pro | xmeml v5 (both NLEs), FCPXML 1.10 (Resolve, sample-accurate audio) (§8) | M5 |
 | R8 | Preserve original media without re-encoding | Read-only access, separate cache, XML references originals; no encoder in the FFmpeg build | all |
 | R9 | Long recordings, interrupted clips, different frame rates | Streaming extraction and memory-mapped cache; drift-aware solver; device clock domains; transitive placement; rational frame rates (§5, §6) | **M1 ✅** (engine), M2 |
@@ -100,8 +100,8 @@ ffmpeg -nostdin -v error -i <media> -map 0:<stream> -vn -sn -dn \
 * **Fingerprint:** SHA-1 of the size and the first and last MiB. Cache entries are keyed by fingerprint, stream,
   channel, and a hash of the analysis parameters. Moving, renaming or copying media keeps its cache; editing it
   invalidates it.
-* **Waveform pyramid:** min/max peaks at 64·2ⁿ samples per bin, written as int8 arrays next to the PCM and served to
-  the renderer through `mcsync-cache://`.
+* **Waveform pyramid:** min/max peaks at 64·4ⁿ samples per bin (64 … 65 536), written as μ-law int8 arrays next to
+  the PCM and read by the renderer through the main process (`peaks:read`), which only serves files inside the cache.
 * **Budget:** 8 kHz float32 is 115 MB per hour of audio. The cache location is the OS cache directory (overridable),
   with an LRU size limit (default 20 GB) and a "clear cache" action.
 
@@ -256,7 +256,7 @@ Reference machine: 8-core laptop (Apple M-series or recent x86), SSD, 16 GB RAM.
 | Re-solve after a manual edit | ≤ 50 ms | 2.4 ms for 24 clips / 221 pairs |
 | Extraction throughput | ≥ 50× real time per core (FFmpeg decode-bound) | M2 |
 | Engine memory | ≤ 2 GB for a 10 h project | about 3× the active analysis signals; memory-mapped in M2 |
-| UI | 60 fps timeline scroll/zoom with 300 clips | M4 |
+| UI | 60 fps timeline scroll/zoom with 300 clips | M4, software rendering (no GPU): panning at 59–60 fps (p95 16.8 ms); fast zooming at 53–55 fps (median 16.7 ms). Not yet measured on real hardware. |
 | False confident matches on unrelated audio | 0 in the regression corpus | 0 / 132 synthetic pairs |
 
 ## 12. Tooling and conventions

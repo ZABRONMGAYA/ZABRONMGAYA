@@ -149,6 +149,14 @@ def test_full_workflow(svc, tmp_path, wedding_shoot):
     svc.call("correction.undo")
     assert len(svc.call("correction.list")) == 1
 
+    partners = {m["other_name"]: m for m in svc.call("sync.matches", clip_id=a002)}
+    recorder = partners["230614_001.WAV"]
+    assert recorder["status"] == "confident" and not recorder["rejected"]
+    assert recorder["offset_s"] == pytest.approx(shoot.expected("CAM_A/A002.MOV"), abs=1e-3)
+    svc.call("correction.add", kind="reject_pair", clip_id=a002, other_clip_id=ref)
+    assert {m["other_name"]: m for m in svc.call("sync.matches", clip_id=a002)}["230614_001.WAV"]["rejected"]
+    svc.call("correction.undo")
+
     snapped = svc.call("sync.snap", clip_id=a002, anchor_clip_id=ref, approx_offset_s=159.8, radius_s=2.0)
     assert snapped["offset_s"] == pytest.approx(shoot.expected("CAM_A/A002.MOV"), abs=1e-3)
     assert snapped["status"] == "confident"

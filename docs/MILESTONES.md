@@ -11,8 +11,8 @@ Estimates assume one senior engineer; UI milestones parallelise well with a seco
 | M1 | Synchronisation engine + synthetic test suite | 2–3 weeks | ✅ done |
 | M2 | Media layer: probe, extract, cache, devices | 2–3 weeks | ✅ done |
 | M3 | Project persistence, engine service (JSON-RPC), CLI, parallelism | 2–3 weeks | ✅ done |
-| M4 | Desktop shell and timeline UI | 4–6 weeks | next |
-| M5 | XML export and NLE validation | 2–3 weeks | |
+| M4 | Desktop shell and timeline UI | 4–6 weeks | ✅ done |
+| M5 | XML export and NLE validation | 2–3 weeks | next |
 | M6 | Hardening, packaging, beta | 3–4 weeks | |
 
 ## M0: Architecture and specifications ✅
@@ -125,29 +125,74 @@ seconds); XAVC LTC change tables in sidecars (tmcd tracks cover those cameras).
 * **Not done.** JSON schemas for generating the TypeScript types. The TypeScript types will be written against the
   implemented payloads in M4 and checked by contract tests.
 
-## M4: Desktop shell and timeline UI
+## M4: Desktop shell and timeline UI ✅
 
-**Scope:**
+**Deliverables (in `app/`):**
 
-* **Electron main:** engine supervisor (spawn, handshake, health ping, restart), hardened renderer, preload bridge,
-  `mcsync-cache://` protocol, native menus and dialogs.
-* **React renderer:**
-  * **Media bin:** drag-and-drop import, devices, streams and channels, offline media.
-  * **Sync panel:** mode, reference, progress, cancel.
-  * **Timeline:** Canvas 2D; one track per device; waveform peaks; zoom from a whole day down to single samples;
-    status colours.
-  * **Review queue:** reasons, match-quality plot, alternatives, overlaid waveforms, snap, nudge by frame or sample,
-    reject, exclude.
-  * **Undo/redo.**
-* Playwright end-to-end: import → sync → review → export on a fixture project.
+* **Electron main** (`electron/`):
+  * the engine supervisor: spawn, `engine.hello` handshake with a protocol check, request timeouts, automatic
+    restart after a crash (up to three times), clean shutdown;
+  * a hardened renderer: context isolation, sandbox, CSP, no navigation;
+  * the preload bridge, with engine methods allow-listed;
+  * native menus with shortcuts, and native dialogs;
+  * waveform reads confined to the cache directory.
+* **React renderer** (`src/`):
+  * **Welcome:** new/open project, recent projects, engine and FFmpeg problems explained.
+  * **Media bin:** import by dialog or drag and drop; clips grouped by device; rename a device or change its type;
+    per-clip audio stream and channel choice; badges for chapters, VFR and offline media.
+  * **Toolbar:** sync mode, jam-synced timecode, reference clip, Synchronise, job progress with cancel, undo/redo.
+  * **Timeline:**
+    * one track per device, plus overflow lanes for overlapping clips;
+    * one canvas for all clips and waveforms, drawn from the engine's peak pyramids;
+    * zoom from a whole day down to single samples (Ctrl/⌘ + wheel, buttons, menu) and pan (wheel or drag),
+      always keeping some footage in view;
+    * status colours: synced, needs review, manual;
+    * group tabs for clips not linked to the reference, and a strip of clips that could not be placed;
+    * an edit cursor;
+    * drag a clip to place it by hand.
+  * **Review queue** (most severe first) and **inspector**:
+    * facts, flags and drift explained in plain language;
+    * nudge by 1/10 frames or 1 ms (also ←/→, Shift, Alt);
+    * snap to audio within ±2 s, with the other positions that fit;
+    * confirm a position, place at the cursor, reset to automatic, exclude/include, use as reference;
+    * every audio match of the clip with Use / Reject / Restore.
+* **Tests:**
+  * Vitest units (`tests/`);
+  * Playwright-for-Electron end to end with the real engine (`e2e/app.spec.ts`);
+  * a 300-clip timeline benchmark with a stand-in engine (`e2e/timeline-perf.spec.ts`, Linux and macOS);
+  * CI on Linux, macOS and Windows (`.github/workflows/app-ci.yml`).
+* **Engine:** `sync.matches` (a clip's matches from its own point of view, including rejected ones).
 
 **Exit criteria:**
 
-* A non-technical tester completes the workflow on a real wedding card dump without help.
-* The timeline stays at 60 fps with 300 clips.
+* **Not yet met.** "A non-technical tester completes the workflow on a real wedding card dump without help" needs
+  real footage and a tester. What is covered: the end-to-end test runs the whole workflow on a generated 7-minute,
+  8-file shoot (MOV/MP4/MTS/BWF, chapters, a drone without audio) and checks every clip against the true position
+  (within 40 ms; audio clips well under 1 ms).
+* **Mostly met: panning yes, fast zooming not quite.** 60 fps with 300 clips was measured with
+  `e2e/timeline-perf.spec.ts`: a 3-hour project with a recorder and 300 camera clips on 12 devices. The container
+  has no GPU, so Chromium renders in software:
+  * panning, whole day or zoomed in: 59–60 fps, p95 frame interval 16.8 ms;
+  * fast zooming over the whole day (90× in half a second, loading new waveform levels on the way): 53–55 fps,
+    median 16.7 ms, p95 33 ms.
 
-**Risks:** timeline rendering performance. Mitigation: canvas plus virtualisation from day one, and peak pyramids
-sized to the zoom level.
+  Real hardware has not been measured yet.
+
+**Changes from the plan:**
+
+* The first version drew each clip as an element with its own waveform canvas. That managed only 28 fps panning and
+  12 fps zooming at 300 clips, so it was replaced by the planned single Canvas 2D surface:
+  * hit-testing uses `geometry.ts`;
+  * a visually hidden list of clip buttons keeps clips reachable by keyboard and screen readers;
+  * components subscribe only to the store fields they use, so the media bin does not re-render on every pan frame.
+* Not done yet:
+  * the match-quality plot and overlaid waveforms in the review inspector (it lists the matches and alternatives
+    instead);
+  * nudging by single samples (the smallest nudge is 1 ms);
+  * an engine health ping (crashes are detected when the process exits).
+
+**Risks:** timeline rendering performance. Mitigation: one canvas, culling, waveform levels chosen by zoom, no
+per-frame allocation or style reads, and a benchmark in CI to catch regressions.
 
 ## M5: XML export and NLE validation
 

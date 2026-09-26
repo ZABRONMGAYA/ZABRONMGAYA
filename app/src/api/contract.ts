@@ -175,6 +175,18 @@ export interface WaveformInfo {
   audio_start_s: number;
 }
 
+export interface ClipMatch {
+  other_clip_id: number;
+  other_name: string;
+  /** start(this clip) - start(other clip), seconds. */
+  offset_s: number | null;
+  confidence: number;
+  status: "confident" | "uncertain" | "no_match";
+  flags: string[];
+  drift_ppm: number;
+  rejected: boolean;
+}
+
 export interface JobRef {
   job_id: string;
 }
@@ -215,10 +227,8 @@ export interface EngineMethods {
   "sync.run": [{ mode?: SyncMode; reference_clip_id?: number; timecode_jam_synced?: boolean }, JobRef];
   "sync.solve": [Record<string, never>, Timeline];
   "sync.snap": [{ clip_id: number; anchor_clip_id: number; approx_offset_s: number; radius_s?: number }, SnapResult];
-  "correction.add": [
-    { kind: CorrectionKind; clip_id: number; other_clip_id?: number; offset_s?: number },
-    Timeline,
-  ];
+  "sync.matches": [{ clip_id: number }, ClipMatch[]];
+  "correction.add": [{ kind: CorrectionKind; clip_id: number; other_clip_id?: number; offset_s?: number }, Timeline];
   "correction.undo": [Record<string, never>, Timeline];
   "correction.redo": [Record<string, never>, Timeline];
   "correction.list": [Record<string, never>, Correction[]];
@@ -232,10 +242,30 @@ export type Method = keyof EngineMethods;
 export type Params<M extends Method> = EngineMethods[M][0];
 export type Result<M extends Method> = EngineMethods[M][1];
 export const ENGINE_METHODS: readonly Method[] = [
-  "engine.hello", "project.create", "project.open", "project.close", "project.info", "project.update_settings",
-  "media.import", "media.list", "media.remove", "device.update", "clip.assign_device", "clip.set_audio",
-  "sync.run", "sync.solve", "sync.snap", "correction.add", "correction.undo", "correction.redo",
-  "correction.list", "timeline.get", "waveform.info", "job.cancel", "job.list",
+  "engine.hello",
+  "project.create",
+  "project.open",
+  "project.close",
+  "project.info",
+  "project.update_settings",
+  "media.import",
+  "media.list",
+  "media.remove",
+  "device.update",
+  "clip.assign_device",
+  "clip.set_audio",
+  "sync.run",
+  "sync.solve",
+  "sync.snap",
+  "sync.matches",
+  "correction.add",
+  "correction.undo",
+  "correction.redo",
+  "correction.list",
+  "timeline.get",
+  "waveform.info",
+  "job.cancel",
+  "job.list",
 ];
 
 export type EngineState = "starting" | "ready" | "crashed" | "stopped";
@@ -276,12 +306,15 @@ export type InvokeResponse<T> = { ok: true; result: T } | { ok: false; error: Rp
 
 /** What the preload script exposes as `window.mcsync`. */
 export interface Bridge {
-  invoke<M extends Method>(method: M, params: Params<M>): Promise<Result<M>>;
+  /** Resolves with an envelope; `api/client.ts` turns failures into EngineError. */
+  invoke<M extends Method>(method: M, params: Params<M>): Promise<InvokeResponse<Result<M>>>;
   onEvent(listener: (event: EngineEvent) => void): () => void;
   engineStatus(): Promise<EngineStatus>;
   chooseMedia(kind: "files" | "folder"): Promise<string[]>;
   chooseProjectToOpen(): Promise<string | null>;
   chooseProjectToCreate(defaultName: string): Promise<string | null>;
+  /** Filesystem path of a file dropped onto the window. */
+  pathForFile(file: File): string;
   /** Bytes [offset, offset + length) of a waveform file inside the analysis cache. */
   readPeaks(directory: string, file: string, offset: number, length: number): Promise<Uint8Array>;
   platform: string;

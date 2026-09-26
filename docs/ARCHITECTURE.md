@@ -33,14 +33,14 @@ flowchart LR
     F -. "read-only" .-> MEDIA[("Original media")]
     E <--> DB[("Project file<br/>SQLite (.mcsync)")]
     E <--> C[("Analysis cache<br/>8 kHz PCM · envelopes<br/>waveform peaks")]
-    M -. "mcsync-cache://<br/>(waveform files)" .-> C
+    M -. "peaks:read<br/>(waveform files, read-only)" .-> C
     E --> X["XML timelines<br/>(xmeml / FCPXML)"]
 ```
 
 | Process | Responsibilities | Must not |
 |---|---|---|
 | **Renderer** (React) | Media bin, sync controls, timeline view, review queue, export dialog. Holds UI state only. | Touch the filesystem, spawn processes, or hold authoritative project data. |
-| **Main** (Electron/Node) | Window and menu lifecycle, native dialogs, spawning and supervising the engine, forwarding RPC calls and notifications, serving cached waveform files through a custom protocol. | Contain business logic. It is a thin, well-tested bridge. |
+| **Main** (Electron/Node) | Window and menu lifecycle, native dialogs, spawning and supervising the engine, forwarding allow-listed RPC calls and notifications, reading cached waveform files for the renderer. | Contain business logic. It is a thin, well-tested bridge. |
 | **Engine** (Python) | Media probing and audio extraction (through FFmpeg), analysis cache, synchronisation, project persistence, timeline export, job queue with progress and cancellation. | Depend on anything Electron-specific. It is also a standalone CLI and library. |
 | **FFmpeg/ffprobe** | Decoding, downmixing and resampling audio to the analysis format; reading container metadata. | Write anywhere except the engine's stdout pipe. |
 
@@ -150,9 +150,13 @@ Implemented in M3 (`engine/src/mcsync/service/`), protocol version 1. Ids are th
 Errors are JSON-RPC errors: −32700/−32600/−32601/−32602/−32603, plus −32000 no project open, −32001 busy (a
 conflicting job runs), −32002 application error, −32003 FFmpeg missing.
 
-Large binary data (waveform peaks) never goes through JSON. The engine writes peak pyramids into the cache, and the
-renderer loads them through a `mcsync-cache://` protocol registered by the main process. The main process only serves
-paths inside the cache directory.
+Large binary data (waveform peaks) never goes through JSON. The engine writes peak pyramids into the cache and
+`waveform.info` says where; the renderer asks the main process for the bytes (`peaks:read` IPC). The main process
+only reads `peaks_<n>.i8` files inside the engine's cache directory.
+
+The renderer reaches the system only through `window.mcsync` (`app/electron/preload.ts`): `invoke` for allow-listed
+engine methods (typed by `app/src/api/contract.ts`), engine events, native file dialogs, dropped-file paths and
+`readPeaks`. The renderer runs sandboxed with context isolation and a strict Content Security Policy.
 
 ## 7. Repository layout
 
@@ -166,17 +170,19 @@ paths inside the cache directory.
 │   ├── tests/                 unit, synthetic-audio and end-to-end tests                  [M1 ✅]
 │   ├── scripts/benchmark_sync.py                                                           [M1 ✅]
 │   └── packaging/             PyInstaller spec, FFmpeg fetch script                       [M6]
-├── app/                       Electron + React + TypeScript                               [M4]
-│   ├── package.json · electron-builder.yml · vite.config.ts
-│   ├── electron/              main.ts · preload.ts · engine-bridge.ts · protocol.ts
+├── app/                       Electron + React + TypeScript                               [M4 ✅]
+│   ├── package.json · vite.config.ts · playwright.config.ts · scripts/ (build, dev)
+│   ├── electron/              main.ts (window, menus, dialogs, IPC) · engine.ts (supervisor) · preload.ts
 │   ├── src/
-│   │   ├── api/               typed RPC client (generated types)
-│   │   ├── state/             Zustand stores (project, timeline, jobs, selection)
-│   │   ├── features/          media-bin · sync-panel · timeline · review-queue · export
-│   │   └── components/        shared UI primitives
-│   └── e2e/                   Playwright-for-Electron tests
+│   │   ├── api/               contract.ts (RPC payload types, bridge) · client.ts
+│   │   ├── state/             store.ts (Zustand: project, media, timeline, jobs, selection, view)
+│   │   ├── features/          welcome · media · sync (toolbar) · timeline · inspector (review queue)
+│   │   ├── components/        status bar, toasts
+│   │   └── lib/               formatting, plain-language labels for flags and reasons
+│   ├── tests/                 Vitest unit tests (format, geometry, waveform maths, store)
+│   └── e2e/                   Playwright-for-Electron: workflow test, 300-clip benchmark
 ├── fixtures/                  golden XML files (test media is generated at test time)    [M5]
-└── .github/workflows/         engine-ci.yml [M1 ✅] · app-ci.yml [M4] · release.yml [M6]
+└── .github/workflows/         engine-ci.yml [M1 ✅] · app-ci.yml [M4 ✅] · release.yml [M6]
 ```
 
 ## 8. Concurrency and performance model
@@ -223,5 +229,7 @@ paths inside the cache directory.
 | Media integration | Real containers generated with FFmpeg (MOV/MP4/MTS/BWF, tmcd, drop-frame, chapters, delayed audio, truncation) | `engine/tests/test_media_*.py` [M2 ✅] |
 | Export golden files | xmeml/FCPXML diffed against reviewed references; schema validation | M5 |
 | NLE import checklist | Resolve and Premiere imports on every release candidate, per the matrix in the spec | M5/M6 |
-| UI end-to-end | Playwright for Electron: import → sync → review → export against a fixture project | M4 |
+| UI unit tests | Formatting, timeline geometry, waveform maths (checked against the engine's μ-law decoder), store actions against a fake bridge | `app/tests/` [M4 ✅] |
+| UI end-to-end | Playwright for Electron with the real engine: new project → import a generated shoot → sync (positions checked against the truth) → inspect → drag → undo → nudge → snap → reject/restore → reopen | `app/e2e/app.spec.ts` [M4 ✅]; export in M5 |
+| UI performance | 300-clip, 3-hour project served by a stand-in engine; frame intervals while panning and zooming | `app/e2e/timeline-perf.spec.ts` [M4 ✅] |
 | Benchmarks | `scripts/benchmark_sync.py`; regressions tracked per release | M1 ✅ |
