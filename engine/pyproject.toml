@@ -19,8 +19,14 @@ dev = [
     "ruff>=0.5",
 ]
 
+[project.scripts]
+mcsync = "mcsync.cli:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"mcsync.project" = ["*.sql"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

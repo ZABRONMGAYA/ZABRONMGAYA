@@ -103,3 +103,22 @@ def test_envelope_is_cached_per_parameter_set():
 def test_invalid_params_are_rejected(kwargs):
     with pytest.raises(ValueError):
         SyncParams(**kwargs)
+
+
+def test_memory_mapped_signals_cross_processes_as_file_references(tmp_path):
+    import pickle
+
+    from mcsync.sync import AnalysisSignal
+
+    sig = prepare_signal(np.random.default_rng(3).standard_normal(8000 * 60).astype(np.float32), 8000)
+    path = tmp_path / "signal.f32"
+    sig.samples.astype("<f4").tofile(path)
+    mapped = AnalysisSignal(np.memmap(path, dtype="<f4", mode="r"), 8000, sig.level_dbfs)
+    blob = pickle.dumps(mapped)
+    assert len(blob) < 2000  # a path, not 1.9 MB of samples
+    first, second = pickle.loads(blob), pickle.loads(blob)
+    np.testing.assert_array_equal(first.samples, sig.samples)
+    assert first._envelopes is second._envelopes  # one envelope cache per file per process
+    copied = pickle.loads(pickle.dumps(sig))  # in-memory signals travel by value
+    np.testing.assert_array_equal(copied.samples, sig.samples)
+    assert copied.level_dbfs == sig.level_dbfs

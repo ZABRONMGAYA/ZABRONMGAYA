@@ -102,6 +102,8 @@ class MediaInfo:
     serial: str | None = None
     encoder: str | None = None
     bwf: BwfMetadata | None = None
+    #: Container start time: FFmpeg's time zero when it decodes this file.
+    format_start_s: float | None = None
     raw: dict = field(default_factory=dict, compare=False, repr=False)
 
     @property
@@ -128,9 +130,19 @@ class MediaInfo:
         return self.audio[0].start_time_s if self.audio else 0.0
 
     def audio_start_s(self, stream: AudioStreamInfo | None = None) -> float:
-        """Position of the stream's first sample relative to the clip start."""
+        """Position of the extracted audio's first sample relative to the clip start.
+
+        Extraction pads every stream to the container's time zero
+        (``aresample=first_pts=0``), so the decoder's own timestamps position
+        the audio. Only the container start matters, not the per-stream
+        ``start_time``, which ffprobe versions report differently when edit
+        lists delay a stream.
+        """
         stream = stream or self.primary_audio
-        return 0.0 if stream is None else stream.start_time_s - self.origin_s
+        if stream is None:
+            return 0.0
+        start = self.format_start_s if self.format_start_s is not None else stream.start_time_s
+        return start - self.origin_s
 
 
 # ---------------------------------------------------------------------------
@@ -216,6 +228,7 @@ def parse_probe(
         serial=serial,
         encoder=fmt_tags.get("encoder") or video_tags.get("encoder"),
         bwf=bwf,
+        format_start_s=_float(fmt.get("start_time")),
         raw=data,
     )
 

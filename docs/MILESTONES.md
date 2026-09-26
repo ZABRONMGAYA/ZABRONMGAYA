@@ -10,8 +10,8 @@ Estimates assume one senior engineer; UI milestones parallelise well with a seco
 | M0 | Architecture, specification, plan | 1 week | ✅ done |
 | M1 | Synchronisation engine + synthetic test suite | 2–3 weeks | ✅ done |
 | M2 | Media layer: probe, extract, cache, devices | 2–3 weeks | ✅ done |
-| M3 | Project persistence, engine service (JSON-RPC), CLI, parallelism | 2–3 weeks | next |
-| M4 | Desktop shell and timeline UI | 4–6 weeks | |
+| M3 | Project persistence, engine service (JSON-RPC), CLI, parallelism | 2–3 weeks | ✅ done |
+| M4 | Desktop shell and timeline UI | 4–6 weeks | next |
 | M5 | XML export and NLE validation | 2–3 weeks | |
 | M6 | Hardening, packaging, beta | 3–4 weeks | |
 
@@ -94,21 +94,34 @@ Estimates assume one senior engineer; UI milestones parallelise well with a seco
 **Not done, deliberately:** resuming a half-extracted file (an interrupted extraction restarts that file; files take
 seconds); XAVC LTC change tables in sidecars (tmcd tracks cover those cameras).
 
-## M3: Project persistence and engine service
+## M3: Project persistence and engine service ✅
 
-**Scope:**
+**Deliverables:**
 
-* `project/`: SQLite schema and migrations, repositories, append-only corrections with undo/redo.
-* `service/`: JSON-RPC 2.0 over stdio, job queue with progress (throttled) and cancellation, incremental pair
-  persistence and resume, `ProcessPoolExecutor` for extraction and matching, cached reference spectra.
-* `cli.py`: `mcsync sync <folder> [--mode hybrid] [--export timeline.xml]` for headless use and QA.
-* JSON schemas for every RPC method (source for the TypeScript types).
+* `project/`: SQLite project file (schema v1, WAL). Devices, media with full metadata, clips, sync runs, pair matches
+  under content-derived pair keys, an append-only correction log with undo/redo, and placements. Media status
+  (online/offline/changed) is refreshed on open.
+* `timeline.py`: groups, one track per device (cameras first, recorders last), overflow lanes for overlapping clips of
+  one device, and a review queue ordered by severity (conflict, device overlap, detached, uncertain, metadata only,
+  unsynced, offline).
+* `service/`: JSON-RPC 2.0 over stdio. Every method in ARCHITECTURE §6 except `export.xml` (M5). Background jobs send
+  throttled progress and support cancellation. stdout is protected from stray prints. Errors map to JSON-RPC codes.
+* **Parallel matching:** `SyncEngine.match_pairs` with a warm process pool (`create_match_pool`); memory-mapped
+  signals travel as file paths.
+* **Incremental and resumable synchronisation** through pair keys.
+* `cli.py`: `mcsync serve | probe | sync`, sharing the service code.
 
 **Exit criteria:**
 
-* Kill the engine mid-run, restart it, and the run resumes without redoing finished pairs.
-* A 100-clip synthetic project syncs in ≤ 3 minutes on 8 cores.
-* The RPC contract tests pass.
+* **Met.** Kill the engine mid-run, restart, and the run resumes without redoing finished pairs. Tested with a real
+  child process and `kill -9`.
+* **Met.** The RPC contract is exercised in-process and over real pipes: protocol errors, busy/cancel, the full
+  import → sync → correct → undo → snap → re-sync workflow, and shutdown.
+* **Changed.** "100 clips in ≤ 3 minutes on 8 cores" is not measured yet. Measured instead: 3.4× on 4 cores with a
+  warm pool (99 pairs around a 1 h recorder in 1.8 s instead of 6.2 s). A re-run with nothing changed finishes in about
+  1 s.
+* **Not done.** JSON schemas for generating the TypeScript types. The TypeScript types will be written against the
+  implemented payloads in M4 and checked by contract tests.
 
 ## M4: Desktop shell and timeline UI
 

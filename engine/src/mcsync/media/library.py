@@ -151,7 +151,11 @@ def build_clip_inputs(
     *,
     timecode_jam_synced: bool = False,
     use_creation_time: bool = True,
+    clip_ids: Sequence[str] | None = None,
 ) -> list[ClipInput]:
+    """Engine inputs for ``items``; clip ids default to the file paths."""
+    if clip_ids is not None and len(clip_ids) != len(items):
+        raise ValueError("clip_ids must match items")
     by_device: dict[str, list[int]] = defaultdict(list)
     for i, it in enumerate(items):
         by_device[it.device.key].append(i)
@@ -167,7 +171,7 @@ def build_clip_inputs(
             rec_run.add(key)
 
     clips: list[ClipInput] = []
-    for it in items:
+    for k, it in enumerate(items):
         clocks: list[ClockReading] = []
         tc = it.info.timecode
         if tc is not None and it.device.key not in rec_run:
@@ -187,7 +191,7 @@ def build_clip_inputs(
             )
         clips.append(
             ClipInput(
-                clip_id=it.path,
+                clip_id=clip_ids[k] if clip_ids is not None else it.path,
                 audio=it.signal,
                 duration_s=it.info.duration_s,
                 device_id=it.device.key,

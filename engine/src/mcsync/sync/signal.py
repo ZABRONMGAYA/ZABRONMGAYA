@@ -11,6 +11,9 @@ from scipy import signal as sps
 from .features import log_energy_envelope
 from .params import DEFAULT_PARAMS, SyncParams
 
+_SHARED_MAPS: dict[tuple, tuple[np.ndarray, dict]] = {}
+_SHARED_MAPS_MAX = 256
+
 
 @dataclass(eq=False)
 class AnalysisSignal:
@@ -32,6 +35,37 @@ class AnalysisSignal:
 
     def is_silent(self, params: SyncParams = DEFAULT_PARAMS) -> bool:
         return self.level_dbfs < params.silence_floor_dbfs
+
+    def __getstate__(self) -> dict:
+        # A memory-mapped signal crosses to worker processes as its file path
+        # only: every worker maps the same cache file instead of receiving a copy.
+        samples = self.samples
+        state = {"rate": self.rate, "level_dbfs": self.level_dbfs}
+        if isinstance(samples, np.memmap) and samples.filename is not None:
+            state["memmap"] = (str(samples.filename), samples.dtype.str, samples.shape, samples.offset)
+        else:
+            state["samples"] = np.asarray(samples)
+            state["envelopes"] = self._envelopes
+        return state
+
+    def __setstate__(self, state: dict) -> None:
+        self.rate = state["rate"]
+        self.level_dbfs = state["level_dbfs"]
+        if "memmap" in state:
+            # One mapping and one envelope cache per file per process, shared by
+            # every task that process runs.
+            key = state["memmap"]
+            shared = _SHARED_MAPS.get(key)
+            if shared is None:
+                filename, dtype, shape, offset = key
+                shared = (np.memmap(filename, dtype=dtype, mode="r", shape=shape, offset=offset), {})
+                if len(_SHARED_MAPS) >= _SHARED_MAPS_MAX:
+                    _SHARED_MAPS.pop(next(iter(_SHARED_MAPS)))
+                _SHARED_MAPS[key] = shared
+            self.samples, self._envelopes = shared
+        else:
+            self.samples = state["samples"]
+            self._envelopes = state["envelopes"]
 
     def envelope(self, params: SyncParams = DEFAULT_PARAMS) -> np.ndarray:
         """Coarse-stage feature, cached per parameter set."""

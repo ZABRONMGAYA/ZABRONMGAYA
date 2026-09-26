@@ -247,8 +247,10 @@ Timecode arithmetic lives in `mcsync.timecode`:
   phone footage can also have irregular audio timing; it is detected at import (M2) and flagged.
 * **Export quantisation:** xmeml positions are whole sequence frames, so up to ½ frame of rounding. Sub-frame audio
   placement needs FCPXML (M5).
-* **Scale:** pairs are matched sequentially today. A process pool (M3) and cached reference spectra should give about
-  4–8× on a laptop. Signals longer than about 6 h should be memory-mapped from the cache (M2) rather than held in RAM.
+* **Scale:** pairs are matched in a warm process pool (M3): 3.4× on 4 cores. Matching holds the GIL, so threads gave
+  1.05×. Workers use single-threaded maths libraries; letting each open its own thread pool made parallel runs 3×
+  *slower* than serial. Signals are memory-mapped from the cache (M2) and reach workers as file paths. Incremental
+  runs match only new pairs. Caching reference spectra across pairs is a possible further gain.
 
 ## 11. Parameter reference
 

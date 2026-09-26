@@ -35,7 +35,6 @@ from mcsync.testing.media import (
     SHOOT_TIME_OF_DAY,
     creation_time,
     ffmpeg_available,
-    generate_wedding_shoot,
     run_ffmpeg,
     timecode_label,
     write_bwf,
@@ -49,8 +48,8 @@ AUDIO_TOL = 1e-3  # 1 ms
 
 
 @pytest.fixture(scope="module")
-def shoot(tmp_path_factory):
-    return generate_wedding_shoot(tmp_path_factory.mktemp("shoot"))
+def shoot(wedding_shoot):
+    return wedding_shoot
 
 
 @pytest.fixture(scope="module")
@@ -61,7 +60,7 @@ def scanned(shoot, tmp_path_factory):
 
 
 def by_rel(shoot, items):
-    return {str(Path(it.path).relative_to(shoot.root)): it for it in items}
+    return {Path(it.path).relative_to(shoot.root).as_posix(): it for it in items}
 
 
 def test_probe_reads_every_container(shoot, scanned):
@@ -102,7 +101,7 @@ def test_full_pipeline_places_every_file(shoot, scanned):
     items, _ = scanned
     clips = build_clip_inputs(items, timecode_jam_synced=True)
     result = SyncEngine(SyncOptions(reference_clip_id=shoot.path(shoot.reference))).run(clips)
-    placements = {str(Path(cid).relative_to(shoot.root)): p for cid, p in result.placements.items()}
+    placements = {Path(cid).relative_to(shoot.root).as_posix(): p for cid, p in result.placements.items()}
 
     for rel in ("CAM_A/A001.MOV", "CAM_A/A002.MOV", "CAM_C/PRIVATE/AVCHD/BDMV/STREAM/00001.MTS",
                 "GOPRO/DCIM/100GOPRO/GH010042.MP4"):  # fmt: skip
@@ -143,7 +142,11 @@ def test_clip_clocks(shoot, scanned):
     assert [c.source for c in recorder.clocks] == [ClockSource.BWF]
     chapter = clips[shoot.path("GOPRO/DCIM/100GOPRO/GH020042.MP4")]
     assert any(c.source == ClockSource.CHAPTER and c.start_s > 0 for c in chapter.clocks)
-    assert clips[shoot.path("CAM_B/C0001.MP4")].audio_start_s == pytest.approx(0.228, abs=0.002)
+    # Extraction pads delayed audio from the container start, so the audio starts with the clip.
+    assert clips[shoot.path("CAM_B/C0001.MP4")].audio_start_s == 0.0
+    assert clips[shoot.path("CAM_C/PRIVATE/AVCHD/BDMV/STREAM/00001.MTS")].audio_start_s == pytest.approx(
+        -0.0053, abs=1e-3
+    )
 
 
 def test_rec_run_timecode_is_not_used_as_a_clock(tmp_path):

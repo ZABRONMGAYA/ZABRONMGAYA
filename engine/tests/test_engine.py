@@ -321,3 +321,20 @@ def test_input_validation(wedding_clips, speech_scene):
         ClipInput("no-duration")
     with pytest.raises(ValueError):
         engine.match_pair(wedding_clips[0], wedding_clips[-1])  # the drone has no audio
+
+
+def test_parallel_matching_gives_the_serial_results(wedding_clips):
+    from mcsync.sync.engine import create_match_pool
+
+    engine = SyncEngine(SyncOptions(reference_clip_id="recorder"))
+    pairs = engine.candidate_pairs(wedding_clips)
+    serial = engine.match_pairs(pairs)
+    seen = []
+    with create_match_pool(2) as pool:
+        parallel = engine.match_pairs(pairs, pool=pool, on_match=seen.append)
+        cancel = threading.Event()
+        cancel.set()
+        with pytest.raises(SyncCancelled):
+            engine.match_pairs(pairs, pool=pool, cancel=cancel)
+    assert [(m.ref_id, m.tgt_id, m.offset_s) for m in parallel] == [(m.ref_id, m.tgt_id, m.offset_s) for m in serial]
+    assert len(seen) == len(pairs)

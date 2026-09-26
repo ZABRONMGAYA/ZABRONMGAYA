@@ -12,8 +12,9 @@ resamples it to the analysis rate. The engine reads the raw float32 output in
 
 A final pass normalises the file in place to unit RMS. Memory use is a few MB
 whatever the recording length. ``aresample=async=1`` fills timestamp gaps with
-silence (damaged or dropout-affected streams), so sample *n* is always *n /
-rate* seconds after the stream's first sample.
+silence (damaged or dropout-affected streams) and ``first_pts=0`` pads a
+delayed stream from the container's time zero, so sample *n* is always *n /
+rate* seconds after the container starts, whatever the stream metadata says.
 """
 
 from __future__ import annotations
@@ -68,7 +69,8 @@ def ffmpeg_command(
         mix = ["pan=mono|c0=" + "+".join(f"{1 / channels:.10g}*c{k}" for k in range(channels))]
     else:
         mix = []
-    filters = mix + ["aresample=async=1"]
+    # first_pts=0 pads the stream to the container's time zero (see MediaInfo.audio_start_s).
+    filters = mix + ["aresample=async=1:first_pts=0"]
     cmd = [
         tools.ffmpeg, "-nostdin", "-hide_banner", "-v", "error",
         "-i", path,

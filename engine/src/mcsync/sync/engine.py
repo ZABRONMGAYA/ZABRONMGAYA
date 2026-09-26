@@ -14,7 +14,10 @@ Synchronisation runs in two phases with very different costs:
 
 from __future__ import annotations
 
+import multiprocessing
+import os
 from collections.abc import Callable, Sequence
+from concurrent.futures import Executor, ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, field, replace
 from typing import Protocol
 
@@ -62,7 +65,7 @@ class SyncOptions:
 
 
 @dataclass(frozen=True)
-class _Pair:
+class CandidatePair:
     ref: ClipInput
     tgt: ClipInput
     #: Clip-level window for ``start(tgt) - start(ref)``.
@@ -93,6 +96,7 @@ class SyncEngine:
         *,
         progress: ProgressCallback | None = None,
         cancel: CancelToken | None = None,
+        workers: int = 1,
     ) -> list[PairwiseMatch]:
         """Match every pair of clips that could overlap."""
         self._validate(clips)
@@ -100,16 +104,65 @@ class SyncEngine:
             return []
         excluded = corrections.excluded_clips if corrections else set()
         pairs = self.candidate_pairs([c for c in clips if c.clip_id not in excluded])
-        matches: list[PairwiseMatch] = []
-        for k, pair in enumerate(pairs):
-            if cancel is not None and cancel.is_set():
-                raise SyncCancelled()
+        return self.match_pairs(pairs, progress=progress, cancel=cancel, workers=workers)
+
+    def match_pairs(
+        self,
+        pairs: Sequence[CandidatePair],
+        *,
+        progress: ProgressCallback | None = None,
+        cancel: CancelToken | None = None,
+        workers: int = 1,
+        pool: Executor | None = None,
+        on_match: Callable[[PairwiseMatch], None] | None = None,
+    ) -> list[PairwiseMatch]:
+        """Match the given pairs, in worker processes when ``pool`` is given or ``workers > 1``.
+
+        Results come back in the order of ``pairs`` whatever order they finish
+        in; ``on_match`` sees each as soon as it is ready (to persist it).
+        Matching is CPU-bound code that holds the GIL, so threads do not help;
+        processes do. Pass a long-lived ``pool`` from :func:`create_match_pool`
+        to avoid paying worker start-up (about 1 s) on every run.
+        """
+        results: list[PairwiseMatch | None] = [None] * len(pairs)
+
+        def done(k: int, match: PairwiseMatch, finished: int) -> None:
+            results[k] = match
+            if on_match is not None:
+                on_match(match)
             if progress is not None:
-                progress(k / len(pairs), f"Matching {pair.tgt.clip_id} against {pair.ref.clip_id}")
-            matches.append(self.match_pair(pair.ref, pair.tgt, window=pair.window))
+                progress(finished / len(pairs), f"Matched {match.tgt_id} against {match.ref_id}")
+
+        if pool is not None and pairs:
+            self._match_parallel(pairs, pool, done, cancel)
+        elif workers > 1 and len(pairs) >= 2 * workers:
+            with create_match_pool(workers) as own_pool:
+                self._match_parallel(pairs, own_pool, done, cancel)
+        else:
+            for k, pair in enumerate(pairs):
+                if cancel is not None and cancel.is_set():
+                    raise SyncCancelled()
+                done(k, self.match_pair(pair.ref, pair.tgt, window=pair.window), k + 1)
         if progress is not None:
             progress(1.0, f"Matched {len(pairs)} pairs")
-        return matches
+        return [m for m in results if m is not None]
+
+    def _match_parallel(
+        self,
+        pairs: Sequence[CandidatePair],
+        pool: Executor,
+        done: Callable[[int, PairwiseMatch, int], None],
+        cancel: CancelToken | None,
+    ) -> None:
+        futures = {pool.submit(_match_task, self.options, p.ref, p.tgt, p.window): k for k, p in enumerate(pairs)}
+        try:
+            for finished, future in enumerate(as_completed(futures), start=1):
+                if cancel is not None and cancel.is_set():
+                    raise SyncCancelled()
+                done(futures[future], future.result(), finished)
+        finally:
+            for future in futures:
+                future.cancel()  # no-op for finished or running tasks
 
     def solve(
         self,
@@ -178,12 +231,12 @@ class SyncEngine:
             flags=flags,
         )
 
-    def candidate_pairs(self, clips: Sequence[ClipInput]) -> list[_Pair]:
+    def candidate_pairs(self, clips: Sequence[ClipInput]) -> list[CandidatePair]:
         """Pairs worth matching, with clock-derived search windows (hybrid mode)."""
         opts = self.options
         starts = clock_starts(clips) if opts.mode == SyncMode.HYBRID else {}
         audio_clips = [c for c in clips if c.audio is not None]
-        pairs: list[_Pair] = []
+        pairs: list[CandidatePair] = []
         for i, ref in enumerate(audio_clips):
             for tgt in audio_clips[i + 1 :]:
                 if opts.skip_same_device_pairs and ref.device_id is not None and ref.device_id == tgt.device_id:
@@ -196,7 +249,7 @@ class SyncEngine:
                     if predicted > ref.duration_s + margin or predicted + tgt.duration_s < -margin:  # type: ignore[operator]
                         continue
                     window = (predicted - margin, predicted + margin)
-                pairs.append(_Pair(ref, tgt, window))
+                pairs.append(CandidatePair(ref, tgt, window))
         return pairs
 
     def _clock_prior(
@@ -255,3 +308,41 @@ def _reverse(est: OffsetEstimate) -> OffsetEstimate:
         windows=tuple(replace(w, time_s=w.time_s + w.lag_s, lag_s=-w.lag_s) for w in est.windows),
         alternatives=tuple(replace(a, offset_s=-a.offset_s) for a in est.alternatives),
     )
+
+
+_SINGLE_THREAD_ENV = {"OPENBLAS_NUM_THREADS": "1", "OMP_NUM_THREADS": "1", "MKL_NUM_THREADS": "1"}
+
+
+def create_match_pool(workers: int | None = None) -> ProcessPoolExecutor:
+    """A warmed-up pool of matcher processes.
+
+    Workers use single-threaded maths libraries (N processes × N library
+    threads on N cores made parallel matching 3× *slower* than serial), and
+    they are started together up front rather than one by one on demand.
+    """
+    workers = workers or max(1, (os.cpu_count() or 2) - 1)
+    saved = {k: os.environ.get(k) for k in _SINGLE_THREAD_ENV}
+    os.environ.update(_SINGLE_THREAD_ENV)
+    try:
+        pool = ProcessPoolExecutor(max_workers=workers, mp_context=multiprocessing.get_context("spawn"))
+        for future in [pool.submit(_warm_up) for _ in range(workers)]:
+            future.result()
+    finally:
+        for key, value in saved.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+    return pool
+
+
+def _warm_up() -> None:
+    import time
+
+    time.sleep(0.05)  # hold this worker so the next warm-up task starts another one
+
+
+def _match_task(
+    options: SyncOptions, ref: ClipInput, tgt: ClipInput, window: tuple[float, float] | None
+) -> PairwiseMatch:
+    return SyncEngine(options).match_pair(ref, tgt, window=window)

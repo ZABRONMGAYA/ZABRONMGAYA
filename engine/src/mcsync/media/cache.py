@@ -31,6 +31,8 @@ from mcsync.sync.params import DEFAULT_PARAMS, SyncParams
 from mcsync.sync.signal import AnalysisSignal
 
 CACHE_VERSION = "v1"
+#: Bumped whenever extraction output changes (2: padded to the container start).
+EXTRACTION_VERSION = 2
 DEFAULT_MAX_BYTES = 20 * 2**30
 
 
@@ -46,7 +48,7 @@ def default_cache_dir() -> Path:
 
 def params_key(params: SyncParams) -> str:
     """Hash of the parameters that shape the prepared signal."""
-    text = f"{params.analysis_rate}:{params.band_low_hz}:{params.band_high_hz}:bp4"
+    text = f"{params.analysis_rate}:{params.band_low_hz}:{params.band_high_hz}:bp4:{EXTRACTION_VERSION}"
     return hashlib.sha1(text.encode(), usedforsecurity=False).hexdigest()[:10]
 
 

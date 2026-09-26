@@ -16,8 +16,8 @@ audio, dozens of interrupted camera clips, mixed frame rates, drifting clocks.
 | M0 Architecture and specifications | ✅ [docs/](docs/) |
 | M1 Synchronisation engine + automated tests | ✅ [engine/](engine/) |
 | M2 Media layer (ffprobe/ffmpeg, cache, devices) | ✅ [engine/src/mcsync/media](engine/src/mcsync/media) |
-| M3 Persistence, engine service, CLI | next |
-| M4 Desktop UI and timeline | planned |
+| M3 Persistence, JSON-RPC service, CLI, parallel matching | ✅ [engine/src/mcsync/service](engine/src/mcsync/service) |
+| M4 Desktop UI and timeline | next |
 | M5 XML export (Resolve, Premiere) | planned |
 | M6 Hardening, packaging, beta | planned |
 
@@ -38,6 +38,9 @@ python -m pip install -e ".[dev]"
 python -m pytest -m "not slow"        # ~45 s: unit, synthetic-offset and end-to-end tests
 python -m pytest -m slow              # hour-long recordings with clock drift
 python scripts/benchmark_sync.py      # speed on 10 min / 1 h / 3 h references
+
+# Synchronise real footage from the command line (needs FFmpeg on PATH)
+mcsync sync /path/to/card_dumps --project wedding.mcsync --jam-synced
 ```
 
 ```python

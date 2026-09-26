@@ -75,10 +75,12 @@ engine/src/mcsync/
 │   └── engine.py      orchestration: pair selection, clock priors, analyze/solve
 ├── testing/           synthetic.py (scenes, recordings) · media.py (FFmpeg-generated shoots)   [M1–M2 ✅]
 ├── media/             probe · riff · extract · cache · fingerprint · devices · waveform · library   [M2 ✅]
-├── project/           schema.sql · db.py · migrations/ · repository.py                [M3]
-├── service/           rpc.py · jobs.py · handlers.py · __main__.py                    [M3]
+├── project/           schema.sql · db.py (project file, corrections log, pair matches)  [M3 ✅]
+├── service/           rpc.py · jobs.py · app.py (all methods) · __main__.py            [M3 ✅]
+├── timeline.py        timeline model and review queue (UI and export)                  [M3 ✅]
+├── serialize.py       JSON conversion for the project file and the protocol            [M3 ✅]
 ├── export/            timeline.py · xmeml.py · fcpxml.py                              [M5]
-└── cli.py             `mcsync sync <folder> --export timeline.xml`                    [M3]
+└── cli.py             `mcsync serve | probe | sync <folders> [--project]`             [M3 ✅]
 ```
 
 Dependencies point one way: `service → project, media, sync, export`; `sync` depends only on NumPy/SciPy and knows
@@ -125,21 +127,28 @@ Renderer → main uses a single `window.mcsync.invoke(method, params)` exposed t
 `window.mcsync.on(event, handler)` for notifications. Main forwards calls unchanged to the engine. The TypeScript
 types are generated from the engine's JSON schemas so both sides share one contract.
 
+Implemented in M3 (`engine/src/mcsync/service/`), protocol version 1. Ids are the project database's integer ids.
+
 | Method | Params → Result | Notes |
 |---|---|---|
-| `engine.hello` | → `{version, capabilities}` | Handshake; the main process refuses mismatched major versions. |
-| `project.create` / `project.open` / `project.close` | `{path}` → project summary | Opens the SQLite file and runs migrations. |
-| `media.import` | `{paths[]}` → `{job_id}` | Probes, extracts and caches. Emits `media.imported` per file. |
-| `media.list` | → files, streams, clips, devices | |
-| `device.update`, `clip.assign_device`, `clip.set_audio_stream` | → updated entity | Device identity drives pairing and clock domains. |
-| `sync.run` | `{mode, reference_clip_id?, params?}` → `{job_id}` | Analysis plus solve; resumable. |
-| `sync.solve` | → timeline | Re-runs placement only. |
-| `sync.snap` | `{clip_id, anchor_clip_id, approx_offset_s, radius_s}` → match | "Snap to audio" after a rough drag. |
-| `correction.add` / `correction.undo` / `correction.redo` | correction → timeline | Append-only log, so undo is trivial. |
-| `timeline.get` | `{group?}` → tracks, clips, placements, review queue | |
-| `export.xml` | `{format, path, sequence_rate, options}` → report | |
-| `job.cancel` | `{job_id}` | Cooperative cancellation checked between pairs and file chunks. |
-| **Notifications** | `job.progress {job_id, fraction, message}` · `job.done` · `job.failed` · `media.imported` | Throttled to 10 Hz. |
+| `engine.hello` / `engine.shutdown` | `{client?}` → `{version, protocol, ffmpeg, cache_dir, workers}` | The main process refuses a mismatched protocol version. |
+| `project.create` / `project.open` / `project.close` / `project.info` | `{path, name?}` → project summary | Opening refreshes media online/offline status. |
+| `project.update_settings` | `{mode?, reference_clip_id?, timecode_jam_synced?, use_creation_time?}` → settings | |
+| `media.import` | `{paths[], recursive?}` → `{job_id}` | Scans, probes, stores, extracts. Emits `media.imported` per file. |
+| `media.list` / `media.remove` | → `{clips[], devices[]}` | Clip summaries: rate, VFR, timecode, streams, chapter. |
+| `device.update`, `clip.assign_device`, `clip.set_audio` | → updated listing / clip | Device identity drives pairing and clock domains. |
+| `sync.run` | `{mode?, reference_clip_id?, timecode_jam_synced?}` → `{job_id}` | Incremental and resumable; the result has `pairs`, `reused`, `matched` and the timeline. |
+| `sync.solve` | → timeline | Re-runs placement only (milliseconds). |
+| `sync.snap` | `{clip_id, anchor_clip_id, approx_offset_s, radius_s}` → match | "Snap to audio" after a rough drag; not saved. |
+| `correction.add` / `.undo` / `.redo` / `.list` | correction → timeline | Append-only log. |
+| `timeline.get` | → groups, tracks, clips, unsynced, review queue, stats | |
+| `waveform.info` | `{clip_id}` → cache directory, peak files, rate, audio offset | The renderer then reads the peak files itself. |
+| `job.cancel` / `job.list` | `{job_id}` | Cooperative cancellation between files, chunks and pairs. |
+| `export.xml` | `{format, path, sequence_rate, options}` → report | M5. |
+| **Notifications** | `job.progress {job_id, kind, progress, message}` · `job.done {job_id, kind, result}` · `job.failed {job_id, kind, cancelled, error}` · `media.imported` | Progress throttled to 10 Hz. |
+
+Errors are JSON-RPC errors: −32700/−32600/−32601/−32602/−32603, plus −32000 no project open, −32001 busy (a
+conflicting job runs), −32002 application error, −32003 FFmpeg missing.
 
 Large binary data (waveform peaks) never goes through JSON. The engine writes peak pyramids into the cache, and the
 renderer loads them through a `mcsync-cache://` protocol registered by the main process. The main process only serves

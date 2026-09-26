@@ -38,3 +38,13 @@ def loop_music_scene() -> Scene:
 def unrelated_scenes() -> list[Scene]:
     kinds = ("speech", "music", "ambience", "mixed")
     return [make_scene(150.0, kind=k, rate=SCENE_RATE, seed=1000 + i) for i, k in enumerate(kinds * 2)]
+
+
+@pytest.fixture(scope="session")
+def wedding_shoot(tmp_path_factory):
+    """Real media generated with FFmpeg (see mcsync.testing.media); shared by media and service tests."""
+    from mcsync.testing.media import ffmpeg_available, generate_wedding_shoot
+
+    if not ffmpeg_available():
+        pytest.skip("FFmpeg is not installed")
+    return generate_wedding_shoot(tmp_path_factory.mktemp("shoot"))

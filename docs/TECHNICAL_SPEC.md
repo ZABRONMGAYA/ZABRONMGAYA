@@ -86,9 +86,11 @@ ffmpeg -nostdin -v error -i <media> -map 0:<stream> -vn -sn -dn \
 
 * **Downmix:** channels are averaged explicitly. FFmpeg's own `-ac 1` scales stereo by 1/√2, which would make levels
   3 dB different from the in-memory path. `pan=mono|c0=c<n>` selects a single channel instead.
-* **Timing:** `aresample=async=1` fills timestamp gaps with silence, so sample *n* is always *n*/8000 s after the
-  stream's first sample. Stream start offsets come from ffprobe: the PCM starts at the stream's first sample, and
-  `audio_start_s` places it relative to the clip's first frame.
+* **Timing:** `aresample=async=1:first_pts=0` fills timestamp gaps with silence and pads a delayed stream from the
+  container's time zero, so sample *n* is always *n*/8000 s after the container starts, and `audio_start_s` is the
+  container start relative to the clip's first frame. The decoder's own timestamps place the audio. ffprobe's
+  per-stream `start_time` is not used, because FFmpeg 6 and 7/8 report it differently for edit-list-delayed audio
+  (found in CI: a 0.25 s error on macOS/Windows before this change).
 * **Streaming:** the engine reads 1 MiB chunks, band-passes them (filter state carried across chunks), builds the
   waveform overview, and writes a temporary cache entry that is normalised in place and then renamed. FFmpeg's
   resampler and the engine's own agree to within a microsecond.
@@ -222,130 +224,25 @@ connected clips on lanes per device.
 
 ## 10. Persistence
 
-Project file `*.mcsync` = SQLite, `journal_mode=WAL`, `foreign_keys=ON`. Migrations are keyed by
-`PRAGMA user_version`. The schema is implemented in M3; the DDL below is the target.
+Project file `*.mcsync` = SQLite, `journal_mode=WAL`, `foreign_keys=ON`, migrations keyed by `PRAGMA user_version`.
+Implemented in M3; the schema is [`engine/src/mcsync/project/schema.sql`](../engine/src/mcsync/project/schema.sql).
 
-```sql
-CREATE TABLE project (
-  id             INTEGER PRIMARY KEY CHECK (id = 1),
-  name           TEXT NOT NULL,
-  created_at     TEXT NOT NULL,
-  engine_version TEXT NOT NULL,
-  settings_json  TEXT NOT NULL DEFAULT '{}'      -- sync mode, reference, sequence rate, analysis params
-);
+| Table | Holds |
+|---|---|
+| `project` | Name, engine version, settings (mode, reference clip, jam-synced timecode, creation-time use) |
+| `device` | Identity key from `media/devices.py`, display name, kind, make/model/serial |
+| `media_file` | Absolute and project-relative path, size, mtime, fingerprint, full parsed metadata (incl. raw ffprobe JSON), online/offline/changed status (refreshed on open) |
+| `clip` | The engine's unit: device, selected audio stream and channel, chapter take/index/offset |
+| `sync_run` | Each synchronisation run with its settings and outcome |
+| `pair_match` | Every pairwise match, stored as it finishes, under a **pair key**: hash of both signals' fingerprints, streams, channels, audio offsets, the search window and the analysis parameters. A new run reuses every match whose key still applies. |
+| `correction` | Append-only log (offset, clear_offset, reject/unreject pair, exclude/include) with `undone_at` for undo/redo |
+| `placement` | The latest solve, for opening a project instantly |
+| `export` | Exports and their reports (M5) |
 
-CREATE TABLE device (
-  id           INTEGER PRIMARY KEY,
-  name         TEXT NOT NULL,                     -- "Cam A", "Zoom F6"
-  kind         TEXT NOT NULL CHECK (kind IN ('camera','recorder','phone','drone','other')),
-  make TEXT, model TEXT, serial TEXT,
-  clock_domain TEXT,                              -- NULL: the device's own clock
-  color        TEXT
-);
-
-CREATE TABLE media_file (
-  id            INTEGER PRIMARY KEY,
-  path          TEXT NOT NULL UNIQUE,             -- absolute
-  rel_path      TEXT,                             -- relative to the project file, for relinking
-  size_bytes    INTEGER NOT NULL,
-  mtime_ns      INTEGER NOT NULL,
-  fingerprint   TEXT NOT NULL,
-  container     TEXT NOT NULL,
-  duration_s    REAL NOT NULL,
-  creation_time TEXT,
-  probe_json    TEXT NOT NULL,                    -- raw ffprobe output
-  status        TEXT NOT NULL DEFAULT 'online' CHECK (status IN ('online','offline','changed'))
-);
-
-CREATE TABLE video_stream (
-  media_id     INTEGER PRIMARY KEY REFERENCES media_file(id) ON DELETE CASCADE,
-  stream_index INTEGER NOT NULL,
-  codec TEXT NOT NULL, width INTEGER, height INTEGER, rotation INTEGER NOT NULL DEFAULT 0,
-  fps_num INTEGER NOT NULL, fps_den INTEGER NOT NULL,
-  is_vfr       INTEGER NOT NULL DEFAULT 0,
-  start_time_s REAL NOT NULL DEFAULT 0,
-  timecode TEXT, drop_frame INTEGER
-);
-
-CREATE TABLE audio_stream (
-  media_id           INTEGER NOT NULL REFERENCES media_file(id) ON DELETE CASCADE,
-  stream_index       INTEGER NOT NULL,
-  codec TEXT NOT NULL, sample_rate INTEGER NOT NULL, channels INTEGER NOT NULL, channel_layout TEXT,
-  start_time_s       REAL NOT NULL DEFAULT 0,
-  duration_s         REAL,
-  bwf_time_reference INTEGER,                     -- samples since midnight
-  PRIMARY KEY (media_id, stream_index)
-);
-
-CREATE TABLE clip (                               -- the unit the sync engine sees
-  id                 INTEGER PRIMARY KEY,
-  device_id          INTEGER REFERENCES device(id) ON DELETE SET NULL,
-  audio_stream_index INTEGER,
-  audio_channel      INTEGER,                     -- NULL: downmix
-  audio_start_s      REAL NOT NULL DEFAULT 0,
-  clock_start_s      REAL,
-  clock_source       TEXT CHECK (clock_source IN ('timecode','bwf','creation_time')),
-  clock_sigma_s      REAL,
-  excluded           INTEGER NOT NULL DEFAULT 0
-);
-
-CREATE TABLE clip_segment (                       -- 1 row per file; >1 for chaptered recordings
-  clip_id  INTEGER NOT NULL REFERENCES clip(id) ON DELETE CASCADE,
-  seq      INTEGER NOT NULL,
-  media_id INTEGER NOT NULL REFERENCES media_file(id) ON DELETE CASCADE,
-  PRIMARY KEY (clip_id, seq)
-);
-
-CREATE TABLE analysis (                           -- cache index; data lives in files
-  media_id     INTEGER NOT NULL REFERENCES media_file(id) ON DELETE CASCADE,
-  stream_index INTEGER NOT NULL,
-  params_hash  TEXT NOT NULL,
-  pcm_path TEXT NOT NULL, peaks_path TEXT NOT NULL,
-  level_dbfs REAL, created_at TEXT NOT NULL,
-  PRIMARY KEY (media_id, stream_index, params_hash)
-);
-
-CREATE TABLE sync_run (
-  id INTEGER PRIMARY KEY,
-  started_at TEXT NOT NULL, finished_at TEXT,
-  status TEXT NOT NULL CHECK (status IN ('running','completed','cancelled','failed')),
-  params_json TEXT NOT NULL, engine_version TEXT NOT NULL
-);
-
-CREATE TABLE pair_match (                         -- written as pairs finish: runs resume after a crash
-  run_id        INTEGER NOT NULL REFERENCES sync_run(id) ON DELETE CASCADE,
-  ref_clip_id   INTEGER NOT NULL REFERENCES clip(id) ON DELETE CASCADE,
-  tgt_clip_id   INTEGER NOT NULL REFERENCES clip(id) ON DELETE CASCADE,
-  offset_s REAL, offset_time_s REAL NOT NULL,
-  confidence REAL NOT NULL, status TEXT NOT NULL,
-  drift_ppm REAL, drift_std_ppm REAL, std_error_s REAL,
-  estimate_json TEXT NOT NULL,                    -- windows, alternatives, flags
-  PRIMARY KEY (run_id, ref_clip_id, tgt_clip_id)
-);
-
-CREATE TABLE manual_correction (                  -- append-only log; undo sets undone_at
-  id            INTEGER PRIMARY KEY,
-  kind          TEXT NOT NULL CHECK (kind IN ('offset','reject_pair','exclude')),
-  clip_id       INTEGER NOT NULL REFERENCES clip(id) ON DELETE CASCADE,
-  other_clip_id INTEGER REFERENCES clip(id) ON DELETE CASCADE,
-  offset_s      REAL,
-  created_at    TEXT NOT NULL,
-  undone_at     TEXT
-);
-
-CREATE TABLE placement (                          -- latest solve
-  clip_id    INTEGER PRIMARY KEY REFERENCES clip(id) ON DELETE CASCADE,
-  run_id     INTEGER REFERENCES sync_run(id) ON DELETE SET NULL,
-  start_s REAL, group_no INTEGER,
-  method TEXT NOT NULL, confidence REAL NOT NULL, status TEXT NOT NULL,
-  drift_ppm REAL NOT NULL DEFAULT 0, flags_json TEXT NOT NULL DEFAULT '[]'
-);
-
-CREATE TABLE export (
-  id INTEGER PRIMARY KEY, format TEXT NOT NULL, path TEXT NOT NULL,
-  sequence_rate TEXT NOT NULL, created_at TEXT NOT NULL, report_json TEXT NOT NULL
-);
-```
+Pair keys give **incremental synchronisation** and **crash resume**. Adding a camera to a synced project matches only
+that camera's pairs. A run that was cancelled or killed restarts with everything it had already matched (tested by
+killing the engine process mid-run). A second run with nothing changed reuses 19/19 pairs of the test shoot and
+finishes in about 1 s.
 
 ## 11. Performance and accuracy targets
 
