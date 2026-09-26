@@ -137,7 +137,9 @@ def _decode_filtered(
     cancel: CancelToken | None,
     progress: Callable[[float], None] | None,
 ) -> tuple[int, float, dict[int, np.ndarray]]:
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **subprocess_flags())
+    proc = subprocess.Popen(
+        cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **subprocess_flags()
+    )
     assert proc.stdout is not None and proc.stderr is not None
     errors: deque[str] = deque(maxlen=20)
     drain = threading.Thread(

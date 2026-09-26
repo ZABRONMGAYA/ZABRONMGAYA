@@ -533,10 +533,35 @@ class EngineService:
         return [j.summary() for j in self.jobs.jobs.values()]
 
 
+def _claim_stdio() -> tuple[int, int]:
+    """Take stdin/stdout for the protocol; give the rest of the process harmless standard streams.
+
+    The protocol uses private duplicates. Descriptor 0 then reads the null device and descriptor 1 writes to stderr,
+    so stray prints land in the log and child processes (FFmpeg, the matcher pool) can neither read requests nor
+    write into the protocol stream. On Windows this also avoids a deadlock: a starting Python process queries its
+    standard input, and on a pipe this process is blocked reading, that query waits for the next request. The
+    matcher pool never started while the app waited for a sync to finish.
+    """
+    protocol_in, protocol_out = os.dup(0), os.dup(1)  # not inheritable (PEP 446)
+    null = os.open(os.devnull, os.O_RDONLY)
+    os.dup2(null, 0)
+    os.close(null)
+    os.dup2(2, 1)
+    if sys.platform == "win32":  # what new processes get as their standard handles
+        import ctypes
+        import msvcrt
+
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        kernel32.SetStdHandle(-10, msvcrt.get_osfhandle(0))  # STD_INPUT_HANDLE
+        kernel32.SetStdHandle(-11, msvcrt.get_osfhandle(1))  # STD_OUTPUT_HANDLE
+    return protocol_in, protocol_out
+
+
 def serve_stdio(*, cache_dir: str | None = None, workers: int | None = None) -> None:
     """Run the engine service on this process's stdin/stdout until shutdown or EOF."""
-    stdin = open(sys.stdin.fileno(), encoding="utf-8", closefd=False)  # noqa: SIM115 - process lifetime
-    stdout = open(sys.stdout.fileno(), "w", encoding="utf-8", newline="\n", closefd=False)  # noqa: SIM115
+    protocol_in, protocol_out = _claim_stdio()
+    stdin = open(protocol_in, encoding="utf-8")  # noqa: SIM115 - process lifetime
+    stdout = open(protocol_out, "w", encoding="utf-8", newline="\n")  # noqa: SIM115
     server = JsonRpcServer(stdin, stdout)
     service = EngineService(server, cache_dir=cache_dir, workers=workers)
     try:

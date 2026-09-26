@@ -13,7 +13,7 @@ Estimates assume one senior engineer; UI milestones parallelise well with a seco
 | M3 | Project persistence, engine service (JSON-RPC), CLI, parallelism | 2–3 weeks | ✅ done |
 | M4 | Desktop shell and timeline UI | 4–6 weeks | ✅ done |
 | M5 | XML export and NLE validation | 2–3 weeks | ✅ export done; NLE imports to validate |
-| M6 | Hardening, packaging, beta | 3–4 weeks | next |
+| M6 | Hardening, packaging, beta | 3–4 weeks | in progress: installers built |
 
 ## M0: Architecture and specifications ✅
 
@@ -228,7 +228,24 @@ per-frame allocation or style reads, and a benchmark in CI to catch regressions.
 **Risks:** undocumented NLE import behaviour for mixed frame rates. Mitigation: golden files, one module per format
 so a fix stays local, and NLE-derived golden files once real exports are available.
 
-## M6: Hardening, packaging, beta
+## M6: Hardening, packaging, beta (in progress)
+
+**Done so far:**
+
+* `engine/packaging/build_ffmpeg.sh`: the bundled FFmpeg.
+  * One pinned release (8.1.3, commit-checked) on every platform, so clip timing cannot differ between FFmpeg
+    versions.
+  * LGPL 2.1+, statically linked, decode only (PCM encoders only). The licence and the recipe ship alongside.
+  * The build fails if a component the engine uses is missing.
+* `engine/packaging/build_engine.sh`: the engine frozen with PyInstaller (one folder, about 150 MB). It uses its
+  matcher process pool from the frozen executable.
+* `app/electron-builder.yml`: the NSIS installer (Windows x64) and DMGs (macOS arm64, x64), with the app icon and the
+  hardened-runtime entitlements the engine needs. Builds are ad-hoc signed without a Developer ID; with signing
+  secrets they are signed and notarised.
+* `.github/workflows/release.yml` builds each installer on its own platform and runs the end-to-end suite against
+  the packaged app before uploading it. Tags and manual runs collect the installers into a draft release.
+* The engine keeps the protocol pipes to itself (see `service/app.py`, `_claim_stdio`). Child processes get the null
+  device and stderr, which fixed a Windows hang where the matcher pool never started.
 
 **Scope:**
 

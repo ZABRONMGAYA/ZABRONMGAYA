@@ -32,7 +32,12 @@ class FFmpegTools:
 
     def version(self) -> str:
         out = subprocess.run(
-            [self.ffmpeg, "-hide_banner", "-version"], capture_output=True, text=True, timeout=30, **subprocess_flags()
+            [self.ffmpeg, "-hide_banner", "-version"],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            **subprocess_flags(),
         )
         return out.stdout.splitlines()[0] if out.stdout else ""
 

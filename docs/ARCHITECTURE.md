@@ -170,7 +170,7 @@ engine methods (typed by `app/src/api/contract.ts`), engine events, native file 
 │   ├── src/mcsync/            see §4
 │   ├── tests/                 unit, synthetic-audio and end-to-end tests                  [M1 ✅]
 │   ├── scripts/benchmark_sync.py                                                           [M1 ✅]
-│   └── packaging/             PyInstaller spec, FFmpeg fetch script                       [M6]
+│   └── packaging/             build_ffmpeg.sh · build_engine.sh (PyInstaller spec)          [M6 ✅]
 ├── app/                       Electron + React + TypeScript                               [M4 ✅]
 │   ├── package.json · vite.config.ts · playwright.config.ts · scripts/ (build, dev)
 │   ├── electron/              main.ts (window, menus, dialogs, IPC) · engine.ts (supervisor) · preload.ts
@@ -183,7 +183,7 @@ engine methods (typed by `app/src/api/contract.ts`), engine events, native file 
 │   ├── tests/                 Vitest unit tests (format, geometry, waveform maths, store)
 │   └── e2e/                   Playwright-for-Electron: workflow test, 300-clip benchmark
 ├── fixtures/export/           golden xmeml and FCPXML files (test media is generated)    [M5 ✅]
-└── .github/workflows/         engine-ci.yml [M1 ✅] · app-ci.yml [M4 ✅] · release.yml [M6]
+└── .github/workflows/         engine-ci.yml [M1 ✅] · app-ci.yml [M4 ✅] · release.yml [M6 ✅]
 ```
 
 ## 8. Concurrency and performance model
@@ -213,10 +213,22 @@ engine methods (typed by `app/src/api/contract.ts`), engine events, native file 
 
 ## 10. Packaging and distribution (M6)
 
-* The engine is frozen with PyInstaller (one-folder mode for fast start-up) and shipped inside the Electron app's
-  resources together with per-platform LGPL FFmpeg binaries.
-* electron-builder produces a DMG (notarised, hardened runtime) and an NSIS installer (Authenticode-signed).
-  Auto-update through electron-updater is post-v1.
+* The engine is frozen with PyInstaller (one-folder mode for fast start-up) and shipped in the Electron app's
+  resources (`engine/`).
+* Next to it (`ffmpeg/`) is FFmpeg built from source by `engine/packaging/build_ffmpeg.sh`:
+  * the same pinned release on every platform;
+  * LGPL, static, decode only;
+  * shipped with its licence and recipe.
+
+  The app points the engine at it with `MCSYNC_FFMPEG_DIR`.
+* The engine owns its stdio: it reads and writes the protocol through private descriptors, and gives child processes
+  (FFmpeg, the matcher pool) the null device and stderr.
+* electron-builder (`app/electron-builder.yml`) produces DMGs for arm64 and x64 and an NSIS installer for x64. Each
+  is built natively by `.github/workflows/release.yml` and tested there with the end-to-end suite against the
+  packaged app.
+* Signing: with the signing secrets, a Developer ID signature plus notarisation on macOS, and Authenticode on
+  Windows. Without them, macOS builds are ad-hoc signed and Windows builds unsigned.
+* Auto-update through electron-updater is post-v1.
 * No telemetry. Crash reports are written locally and attached by the user if they choose.
 
 ## 11. Testing strategy

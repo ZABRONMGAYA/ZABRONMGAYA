@@ -247,10 +247,10 @@ def test_parallel_matching_through_the_service(tmp_path, wedding_shoot):
 
 
 class Child:
-    def __init__(self, cache: Path) -> None:
+    def __init__(self, cache: Path, workers: int = 1) -> None:
         env = {**os.environ, "PYTHONUNBUFFERED": "1"}
         self.proc = subprocess.Popen(
-            [sys.executable, "-m", "mcsync.cli", "--cache-dir", str(cache), "--workers", "1", "serve"],
+            [sys.executable, "-m", "mcsync.cli", "--cache-dir", str(cache), "--workers", str(workers), "serve"],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, env=env,
         )  # fmt: skip
         self.lines: queue.Queue[dict] = queue.Queue()
@@ -305,6 +305,22 @@ def test_child_process_protocol_and_resume_after_kill(tmp_path, wedding_shoot):
     done = child.wait_for(lambda m: m.get("method") == "job.done" and m["params"]["job_id"] == job)
     result = done["params"]["result"]
     assert result["reused"] >= 1 and result["reused"] + result["matched"] == result["pairs"]
+    assert result["timeline"]["stats"]["synced"] == len(wedding_shoot.truth)
+    assert child.call("engine.shutdown") == {"ok": True}
+    assert child.proc.wait(timeout=30) == 0
+
+
+def test_child_process_matches_in_parallel(tmp_path, wedding_shoot):
+    """The matcher pool must start while the engine is blocked reading requests (it hung on Windows)."""
+    child = Child(tmp_path / "cache", workers=2)
+    child.call("project.create", path=str(tmp_path / "pool.mcsync"))
+    job = child.call("media.import", paths=[str(wedding_shoot.root)])["job_id"]
+    child.wait_for(lambda m: m.get("method") == "job.done" and m["params"]["job_id"] == job)
+    job = child.call("sync.run", timecode_jam_synced=True)["job_id"]
+    done = child.wait_for(lambda m: m.get("method") in ("job.done", "job.failed") and m["params"]["job_id"] == job, 180)
+    assert done["method"] == "job.done", done
+    result = done["params"]["result"]
+    assert result["pairs"] >= 8  # enough for the pool (PARALLEL_MIN_PAIRS)
     assert result["timeline"]["stats"]["synced"] == len(wedding_shoot.truth)
     assert child.call("engine.shutdown") == {"ok": True}
     assert child.proc.wait(timeout=30) == 0

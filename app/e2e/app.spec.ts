@@ -82,6 +82,13 @@ test.beforeAll(() => {
   fs.mkdirSync(screens, { recursive: true });
 });
 
+// A failing step leaves a picture of the window (error toasts included) in test-results.
+test.afterEach(async ({}, testInfo) => {
+  if (testInfo.status !== testInfo.expectedStatus && page) {
+    await page.screenshot({ path: testInfo.outputPath("failure.png") }).catch(() => undefined);
+  }
+});
+
 test.afterAll(async () => {
   await app?.close();
   // Windows may hold the project file open for a moment after the engine exits.

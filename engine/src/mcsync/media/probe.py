@@ -156,7 +156,8 @@ def probe(path: str | Path, tools: FFmpegTools | None = None, *, timeout_s: floa
     path = Path(path)
     cmd = [tools.ffprobe, "-v", "error", "-print_format", "json", "-show_format", "-show_streams", str(path)]
     try:
-        proc = subprocess.run(cmd, capture_output=True, timeout=timeout_s, **subprocess_flags())
+        flags = subprocess_flags()
+        proc = subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True, timeout=timeout_s, **flags)
     except subprocess.TimeoutExpired as exc:
         raise ProbeError(f"{path}: ffprobe timed out") from exc
     if proc.returncode != 0:
