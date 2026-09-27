@@ -48,6 +48,37 @@ function processTree(pid: number | undefined): string {
   }
 }
 
+/** Where the app's main thread is waiting (Linux, when gdb is installed): its stack and each thread's wait channel. */
+function mainThreadStack(pid: number | undefined): string {
+  if (pid === undefined || process.platform !== "linux") return "";
+  const out: string[] = [];
+  try {
+    for (const tid of fs.readdirSync(`/proc/${pid}/task`).slice(0, 40)) {
+      const comm = fs.readFileSync(`/proc/${pid}/task/${tid}/comm`, "utf-8").trim();
+      const wchan = fs.readFileSync(`/proc/${pid}/task/${tid}/wchan`, "utf-8").trim();
+      out.push(`thread ${tid} ${comm}: ${wchan}`);
+    }
+  } catch {
+    // the process is gone
+  }
+  try {
+    const gdb = execFileSync("gdb", ["-p", String(pid), "-batch", "-ex", "thread apply 1 bt 40"], {
+      encoding: "utf-8",
+      timeout: 30_000,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    out.push(
+      gdb
+        .split("\n")
+        .filter((line) => /^#|^Thread/.test(line))
+        .join("\n"),
+    );
+  } catch {
+    out.push("(gdb not available)");
+  }
+  return out.join("\n");
+}
+
 /**
  * Quit the app as a user would. An app that has not quit after `timeoutMs` fails the test with the engine log
  * printed, and is killed so the next test starts clean (Playwright would otherwise wait on it indefinitely).
@@ -60,6 +91,7 @@ export async function closeApp(app: ElectronApplication, userData: string, timeo
   if (result === "timeout") {
     printEngineLog(userData, `the app did not quit within ${timeoutMs / 1000} s`);
     console.log(`--- processes of the app:\n${processTree(app.process().pid)}\n---`);
+    console.log(`--- the app's main thread:\n${mainThreadStack(app.process().pid)}\n---`);
     app.process().kill("SIGKILL");
     throw new Error(`the app did not quit within ${timeoutMs / 1000} s`);
   }

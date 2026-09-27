@@ -337,10 +337,13 @@ class EngineService:
     # ----------------------------------------------------------------- media
 
     def media_add(self, paths: list[str], recursive: bool = True, priority: str = "normal") -> dict:
-        """Import in the background: files are counted as they are found and processed as they arrive."""
+        """Import in the background: files are counted as they are found and processed as they arrive.
+
+        A paused pipeline stays paused (pausing is the user's decision): the files are found and queued, and read
+        when processing resumes.
+        """
         self.tools()  # fail now if FFmpeg is missing
         pipeline = self._pipeline()
-        pipeline.resume()
         return {"request_id": pipeline.import_paths(paths, recursive=recursive, priority=PRIORITY[priority])}
 
     def media_import(self, paths: list[str], recursive: bool = True) -> dict:

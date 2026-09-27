@@ -152,13 +152,15 @@ The 5 clips from another event are all in Review. Nothing below the 85 % thresho
 
   After these fixes: 0 wrong placements, and all 20 sessions recognised
   (see [docs/SYNC_ENGINE.md](docs/SYNC_ENGINE.md) §6–7).
-* **A race let a task start after a pause** had returned (commit `4538ed9`, after this run).
+* **Adding media resumed a paused pipeline,** so files could start processing while paused. Fixed after this
+  run; the pause itself was not affected.
 
 ## 7. Robustness
 
 | Check | Result |
 |---|---|
-| Pause during analysis | Took effect in 0.07 s; running audio decodes are interrupted and return to the queue. One analysis finished recording in the 3 s after the pause. The run predates `4538ed9`, which closes a race where a new task could start just after a pause; a unit test now covers it. |
+| Pause during analysis | Took effect in 0.07 s; running audio decodes are interrupted and return to the queue. One analysis finished recording in the 3 s after the pause. Since this run, adding media no longer resumes a paused pipeline: new files are counted and wait for Resume. A unit test checks that nothing starts while paused. |
+| Quit during analysis (desktop app) | The e2e suites quit the app mid-analysis on every run. A rare hang was found this way (about 1 quit in 10 on Linux): a request sent in the last moment before the engine exited failed; the unhandled error opened Electron's modal error box, which stalled the app's main process. The error is now handled, nothing is sent once the engine is stopping, and a unit test covers the failing write. |
 | Quit during analysis, reopen | The project reopened in 0.06 s and offered to resume 1,675 queued analyses. Finished work was kept, and the run completed normally. |
 | Reopen a synchronised project | 0.06 s for 4,230 clips (every file checked to still be there) |
 | Synchronise again with nothing changed | Every verified pair reused; nothing re-analysed or re-verified |

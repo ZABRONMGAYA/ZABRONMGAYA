@@ -10,5 +10,5 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["electron", "src/api/contract.ts"]
+  "include": ["electron", "src/api/contract.ts", "tests/electron"]
 }

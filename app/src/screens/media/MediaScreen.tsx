@@ -9,6 +9,7 @@ import {
   Import,
   LayoutGrid,
   List,
+  Play,
   RefreshCw,
   Search,
   Unlink,
@@ -681,6 +682,7 @@ function ImportPanel() {
         </Button>
         <span className="sy-import__progress" data-testid="import-progress">
           <strong>
+            {pipeline?.state === "paused" ? "Paused · " : ""}
             {walking ? "Finding files" : "Found"} {(d?.total ?? 0).toLocaleString()} files
           </strong>
           <span className="sy-dim tnum">
@@ -692,6 +694,17 @@ function ImportPanel() {
             )}
           </span>
         </span>
+        {pipeline?.state === "paused" && (
+          <Button
+            variant="secondary"
+            size="compact"
+            icon={Play}
+            onClick={() => void useProd.getState().resumePipeline()}
+            data-testid="import-resume"
+          >
+            Resume
+          </Button>
+        )}
         <Button
           variant="tertiary"
           size="compact"

@@ -28,7 +28,7 @@ Screenshots come from the end-to-end suites (`app/e2e`), taken at 1440 × 900 in
 | S00 Splash | not implemented | The window opens on Home; the status bar shows the engine starting. Open item #1 (dark or light splash) remains unresolved. |
 | S01 Home | implemented | Recent projects, New / Open project. D-03 covers the sidebar. |
 | S02 New project | partial | New project asks where to save the `.syncora` file (native dialog) and opens the import view. The S02 form (name, frame rate, preset) is not built. |
-| S03 Media import | implemented | Drop or browse files and folders; live counts per stage while files are found and read. |
+| S03 Media import | implemented | Drop or browse files and folders; live counts per stage while files are found and read. When processing is paused, the progress line says so and offers Resume (media added while paused waits for it). |
 | S04 Media browser | implemented | Windowed grid and list for thousands of clips, bins (cameras, groups, review, unmatched, offline, duplicates, failed), search grammar, multi-select and bulk actions. See D-05 and D-06. |
 | S05 Analysis | implemented | Stage progress list, source progress and activity. See D-07. |
 | S06 Sync workspace | not implemented | Review and manual sync take place in the timeline stage (04) instead: canvas timeline, review queue and inspector (drag, nudge, snap to audio, reject or restore a match, undo / redo). |

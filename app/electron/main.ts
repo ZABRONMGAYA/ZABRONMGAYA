@@ -238,6 +238,13 @@ app.whenReady().then(async () => {
   }
 });
 
+// An uncaught error in this process would otherwise open Electron's modal error box, which stops the event loop
+// (engine supervision, quitting) until someone dismisses it. Record it instead.
+process.on("uncaughtException", (err) => {
+  console.error("Syncora main process error:", err);
+  engine.note(`main process error: ${err.stack ?? String(err)}`);
+});
+
 let quitting = false;
 app.on("before-quit", (event) => {
   if (quitting) return;

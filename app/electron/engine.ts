@@ -98,6 +98,9 @@ export class EngineProcess extends EventEmitter {
       this.stderrTail.push(...chunk.split("\n").filter(Boolean));
       this.stderrTail.splice(0, Math.max(0, this.stderrTail.length - 200));
     });
+    // Writing to an engine that has just exited fails with EPIPE. Unhandled, that error would reach Electron's
+    // uncaught-exception dialog, whose modal loop stalls the main process (and quitting) until someone dismisses it.
+    child.stdin.on("error", (err) => this.note(`engine input closed: ${err.message}`));
     child.on("error", (err) => this.onExit(null, err.message));
     child.on("exit", (code) => this.onExit(code, null));
     try {
@@ -162,9 +165,18 @@ export class EngineProcess extends EventEmitter {
     }
   }
 
+  /** Add a line to the engine log (diagnostics of the app's side). */
+  note(line: string): void {
+    this.log?.write(`--- ${line} ${new Date().toISOString()}\n`);
+  }
+
   request(method: string, params: unknown, timeoutMs = 120_000): Promise<unknown> {
     const child = this.child;
     if (!child) return Promise.reject(new RpcError(ENGINE_GONE, "the engine is not running"));
+    // Once it is shutting down (or its input is closed), nothing more is sent: the requests could never be answered.
+    if ((this.stopping && method !== "engine.shutdown") || !child.stdin.writable) {
+      return Promise.reject(new RpcError(ENGINE_GONE, "the engine stopped"));
+    }
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {

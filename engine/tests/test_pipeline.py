@@ -96,8 +96,10 @@ def test_pause_resume_cancel_retry_and_restart(service, production, tmp_path):
     deadline = time.time() + 60
     while pipeline.import_request(1).walking and time.time() < deadline:
         time.sleep(0.05)
+    time.sleep(1.0)  # long enough for probes to finish, had any started
+    assert pipeline.paused  # adding media does not resume a paused pipeline
     counts = service.project.task_counts()["probe"]
-    assert counts["pending"] > 0 and counts["done"] == 0  # found, but nothing starts while paused
+    assert counts["pending"] > 0 and counts["done"] == counts["running"] == 0  # found, but nothing starts
     service.pipeline_resume()
     deadline = time.time() + 300
     while service.project.pending_count(["probe", "analyze"]) and time.time() < deadline:
