@@ -1,7 +1,7 @@
 // The engine's JSON-RPC contract (docs/ARCHITECTURE.md §6), as the desktop app sees it.
 // Kept in step with engine/src/mcsync/service/app.py; the e2e tests exercise every method used here.
 
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 
 export type SyncMode = "hybrid" | "audio" | "timecode";
 export type DeviceKind = "camera" | "recorder" | "phone" | "drone" | "other";
@@ -16,6 +16,13 @@ export type ReviewReason =
   | "unsynced"
   | "offline";
 
+export interface WorkerPlan {
+  probe: number;
+  analyze: number;
+  match: number;
+  reason: string;
+}
+
 export interface Hello {
   name: string;
   version: string;
@@ -23,6 +30,8 @@ export interface Hello {
   ffmpeg: string | null;
   cache_dir: string;
   workers: number;
+  plan: WorkerPlan;
+  worker_mode: "auto" | "manual";
 }
 
 export interface ProjectSettings {
@@ -30,6 +39,26 @@ export interface ProjectSettings {
   reference_clip_id: number | null;
   timecode_jam_synced: boolean;
   use_creation_time: boolean;
+  /** Below this confidence a placement is shown as REVIEW (default 0.85). */
+  review_threshold: number;
+}
+
+export type SyncPhase = "waiting" | "planning" | "matching" | "extending" | "solving" | "done";
+
+export interface SyncState {
+  run_id: number;
+  phase: SyncPhase;
+  started: number;
+  finished?: number;
+  elapsed_s?: number;
+  planned?: number;
+  reused?: number;
+  strategy?: "exhaustive" | "staged" | "timecode";
+  queried?: number;
+  to_query?: number;
+  unmatched?: number;
+  extended?: number;
+  extended_planned?: boolean;
 }
 
 export interface ProjectSummary {
@@ -40,6 +69,222 @@ export interface ProjectSummary {
   offline: number;
   devices: number;
   last_run: number | null;
+  /** Work left from the previous session (the app offers Resume / Restart). */
+  resume: { pending: Record<string, number>; sync: SyncState | null } | null;
+  paused: boolean;
+}
+
+export type TaskKind = "probe" | "analyze" | "match" | "extend";
+export type TaskStatus = "pending" | "running" | "done" | "failed" | "skipped" | "cancelled";
+
+export type StageCounts = Record<TaskStatus, number> & { rate_per_min: number | null };
+
+export interface ActivityLine {
+  time: string;
+  what: string;
+  text: string;
+  level: "info" | "warn" | "error";
+}
+
+export interface PipelineStatus {
+  state: "running" | "paused" | "idle";
+  error: string | null;
+  discovery: {
+    total: number;
+    by_kind: Record<string, number>;
+    by_status: Record<string, number>;
+    walking: boolean;
+  };
+  stages: Record<TaskKind, StageCounts>;
+  sync: SyncState | null;
+  aux: string | null;
+  running: { kind: TaskKind; name: string; task_id: number; seconds: number }[];
+  workers: { probe: number; analyze: number; match: number };
+  activity: ActivityLine[];
+}
+
+export interface TaskRow {
+  id: number;
+  kind: TaskKind;
+  target: string;
+  clip_id: number | null;
+  other_clip_id: number | null;
+  stage: string | null;
+  priority: number;
+  status: TaskStatus;
+  attempts: number;
+  error: string | null;
+  updated_at: string;
+  name: string | null;
+  other_name: string | null;
+}
+
+export type ResultCategory =
+  | "synchronized"
+  | "high_confidence"
+  | "review"
+  | "manual"
+  | "failed"
+  | "skipped"
+  | "pending";
+
+/** Column names of `media.index` rows, in order. */
+export const INDEX_COLUMNS = [
+  "clip_id",
+  "name",
+  "kind",
+  "device_id",
+  "device_name",
+  "device_kind",
+  "session_id",
+  "duration_s",
+  "fps",
+  "width",
+  "height",
+  "codec",
+  "sample_rate",
+  "channels",
+  "timecode",
+  "creation_time",
+  "size_bytes",
+  "media_status",
+  "duplicate_of",
+  "duplicate_decision",
+  "probe",
+  "analysis",
+  "sync_status",
+  "confidence",
+  "method",
+  "start_s",
+  "group",
+  "category",
+  "path",
+] as const;
+
+export interface MediaRow {
+  clip_id: number;
+  name: string;
+  kind: "video" | "audio";
+  device_id: number | null;
+  device_name: string | null;
+  device_kind: DeviceKind | null;
+  session_id: number | null;
+  duration_s: number | null;
+  fps: string | null;
+  width: number | null;
+  height: number | null;
+  codec: string | null;
+  sample_rate: number | null;
+  channels: number | null;
+  timecode: string | null;
+  creation_time: string | null;
+  size_bytes: number;
+  media_status: "online" | "offline" | "changed";
+  duplicate_of: number | null;
+  duplicate_decision: "keep" | "ignore" | null;
+  probe: TaskStatus | null;
+  analysis: string | null;
+  sync_status: PlacementStatus | null;
+  confidence: number | null;
+  method: string | null;
+  start_s: number | null;
+  group: number | null;
+  category: ResultCategory;
+  path: string;
+}
+
+export interface Session {
+  id: number;
+  label: string;
+  start_at: string | null;
+  end_at: string | null;
+  group_no: number | null;
+  source: "auto" | "manual";
+  clips: number;
+}
+
+export interface MediaIndex {
+  columns: string[];
+  rows: unknown[][];
+  devices: (Device & { clips: number })[];
+  sessions: Session[];
+  version: number;
+}
+
+export interface SourceSummary {
+  device_id: number | null;
+  name: string;
+  kind: DeviceKind | null;
+  clips: number;
+  counts: Record<ResultCategory, number>;
+  median_confidence: number | null;
+  min_confidence: number | null;
+}
+
+export interface SyncSummary {
+  clips: number;
+  unreadable_files: number;
+  counts: Record<ResultCategory, number>;
+  sources: SourceSummary[];
+  sessions: Session[];
+  run: SyncState | null;
+  last_run: number | null;
+  threshold: number;
+}
+
+export interface Duplicate {
+  media_id: number;
+  path: string;
+  filename: string;
+  original_id: number;
+  original_path: string;
+  original_filename: string;
+  decision: "keep" | "ignore" | null;
+  reason: "identical" | "probable" | null;
+  size_bytes: number;
+  duration_s: number | null;
+  clip_id: number;
+}
+
+export interface OfflineMedia {
+  media_id: number;
+  clip_id: number;
+  path: string;
+  filename: string;
+  size_bytes: number;
+  status: "offline" | "changed";
+}
+
+export interface OfflineVolumes {
+  volumes: { volume: string; online: boolean; ignored: boolean; count: number; media: OfflineMedia[] }[];
+}
+
+export interface SystemResources {
+  resources: {
+    cpu_logical: number;
+    cpu_usable: number;
+    ram_total_bytes: number | null;
+    ram_available_bytes: number | null;
+    gpu: string | null;
+    gpu_memory_bytes: number | null;
+    platform: string;
+  };
+  recommended: WorkerPlan;
+  plan: WorkerPlan;
+  mode: "auto" | "manual";
+  gpu_used: boolean;
+  storage: {
+    cache: { path: string; free_bytes: number; total_bytes: number };
+    project: { path: string; free_bytes: number; total_bytes: number } | null;
+  };
+}
+
+export interface CacheInfo {
+  root: string;
+  bytes: number;
+  entries: number;
+  project_bytes: number;
+  disk: { path: string; free_bytes: number; total_bytes: number };
 }
 
 export interface AudioStream {
@@ -261,11 +506,55 @@ export interface EngineMethods {
   "project.close": [Record<string, never>, { ok: boolean }];
   "project.info": [Record<string, never>, ProjectSummary];
   "project.update_settings": [Partial<ProjectSettings>, ProjectSettings];
+  "engine.configure": [
+    { workers?: "auto" | Partial<Omit<WorkerPlan, "reason">> },
+    { plan: WorkerPlan; mode: "auto" | "manual"; recommended: WorkerPlan },
+  ];
+  "system.resources": [Record<string, never>, SystemResources];
+  "system.disk_speed": [{ path?: string }, { path: string; write_bytes_per_s: number }];
   "media.import": [{ paths: string[]; recursive?: boolean }, JobRef];
+  "media.add": [{ paths: string[]; recursive?: boolean; priority?: Priority }, { request_id: number }];
   "media.list": [Record<string, never>, MediaList];
-  "media.remove": [{ clip_ids: number[] }, MediaList];
-  "device.update": [{ device_id: number; name?: string; kind?: DeviceKind }, MediaList];
-  "clip.assign_device": [{ clip_id: number; device_id: number }, MediaList];
+  "media.index": [Record<string, never>, MediaIndex];
+  "media.remove": [{ clip_ids: number[] }, { removed: number }];
+  "media.rescan": [Record<string, never>, JobRef];
+  "media.duplicates": [Record<string, never>, Duplicate[]];
+  "media.decide_duplicates": [{ media_ids: number[]; decision: "keep" | "ignore" }, { duplicates: Duplicate[] }];
+  "media.offline": [Record<string, never>, OfflineVolumes];
+  "media.relink_folder": [{ folder: string }, OfflineVolumes & { relinked: number; not_matching: string[] }];
+  "media.relink_file": [{ media_id: number; path: string; force?: boolean }, OfflineVolumes];
+  "media.ignore_offline": [{ volume: string; ignore?: boolean }, OfflineVolumes];
+  "media.thumbnails": [{ clip_ids: number[] }, { thumbnails: [number, string][] }];
+  "device.update": [{ device_id: number; name?: string; kind?: DeviceKind }, { devices: Device[] }];
+  "device.create": [{ name: string; kind?: DeviceKind }, { device_id: number }];
+  "clip.assign_device": [{ clip_ids: number[]; device_id: number }, { assigned: number; devices: Device[] }];
+  "session.list": [Record<string, never>, Session[]];
+  "session.create": [{ label: string; clip_ids: number[] }, { session_id: number }];
+  "session.assign": [{ clip_ids: number[]; session_id: number | null }, { sessions: Session[] }];
+  "pipeline.status": [Record<string, never>, PipelineStatus];
+  "pipeline.pause": [Record<string, never>, PipelineStatus];
+  "pipeline.resume": [Record<string, never>, PipelineStatus];
+  "pipeline.restart": [{ sync?: boolean }, PipelineStatus];
+  "tasks.list": [{ statuses: TaskStatus[]; kinds?: TaskKind[]; limit?: number; offset?: number }, TaskRow[]];
+  "tasks.cancel": [
+    { ids?: number[]; clip_ids?: number[]; kinds?: TaskKind[]; running?: boolean },
+    { cancelled: number },
+  ];
+  "tasks.retry": [
+    { statuses?: TaskStatus[]; ids?: number[]; clip_ids?: number[]; kinds?: TaskKind[] },
+    { retried: number },
+  ];
+  "tasks.prioritize": [{ clip_ids: number[]; priority?: Priority }, { changed: number }];
+  "tasks.analyze": [{ clip_ids?: number[]; priority?: Priority }, { queued: number }];
+  "sync.start": [{ mode?: SyncMode; reference_clip_id?: number; timecode_jam_synced?: boolean }, { run_id: number }];
+  "sync.cancel": [Record<string, never>, { cancelled: boolean }];
+  "sync.summary": [Record<string, never>, SyncSummary];
+  "cache.info": [Record<string, never>, CacheInfo];
+  "cache.clear_unused": [Record<string, never>, CacheInfo & { freed_bytes: number }];
+  "project.stats": [
+    Record<string, never>,
+    { bytes: number; wal_bytes: number; rows: Record<string, number>; path: string },
+  ];
   "clip.set_audio": [{ clip_id: number; stream_index: number | null; channel?: number | null }, ClipSummary];
   "sync.run": [{ mode?: SyncMode; reference_clip_id?: number; timecode_jam_synced?: boolean }, JobRef];
   "sync.solve": [Record<string, never>, Timeline];
@@ -285,6 +574,8 @@ export interface EngineMethods {
 export type Method = keyof EngineMethods;
 export type Params<M extends Method> = EngineMethods[M][0];
 export type Result<M extends Method> = EngineMethods[M][1];
+export type Priority = "high" | "normal" | "low";
+
 export const ENGINE_METHODS: readonly Method[] = [
   "engine.hello",
   "project.create",
@@ -292,11 +583,43 @@ export const ENGINE_METHODS: readonly Method[] = [
   "project.close",
   "project.info",
   "project.update_settings",
+  "engine.configure",
+  "system.resources",
+  "system.disk_speed",
   "media.import",
+  "media.add",
   "media.list",
+  "media.index",
   "media.remove",
+  "media.rescan",
+  "media.duplicates",
+  "media.decide_duplicates",
+  "media.offline",
+  "media.relink_folder",
+  "media.relink_file",
+  "media.ignore_offline",
+  "media.thumbnails",
   "device.update",
+  "device.create",
   "clip.assign_device",
+  "session.list",
+  "session.create",
+  "session.assign",
+  "pipeline.status",
+  "pipeline.pause",
+  "pipeline.resume",
+  "pipeline.restart",
+  "tasks.list",
+  "tasks.cancel",
+  "tasks.retry",
+  "tasks.prioritize",
+  "tasks.analyze",
+  "sync.start",
+  "sync.cancel",
+  "sync.summary",
+  "cache.info",
+  "cache.clear_unused",
+  "project.stats",
   "clip.set_audio",
   "sync.run",
   "sync.solve",
@@ -326,6 +649,15 @@ export type EngineEvent =
   | { method: "job.done"; params: { job_id: string; kind: string; result: unknown } }
   | { method: "job.failed"; params: { job_id: string; kind: string; cancelled: boolean; error: string } }
   | { method: "media.imported"; params: { clip_id: number; path: string } }
+  | { method: "media.analyzed"; params: { clip_ids: number[] } }
+  | { method: "media.thumbnails"; params: { thumbnails: [number, string][] } }
+  | { method: "pipeline.progress"; params: PipelineStatus }
+  | { method: "pipeline.matches"; params: { run_id: number; count: number } }
+  | { method: "pipeline.error"; params: { error: string } }
+  | {
+      method: "pipeline.sync_finished";
+      params: { run_id: number; status: "completed" | "cancelled" | "failed"; error?: string; timeline?: Timeline };
+    }
   | { method: "engine.status"; params: EngineStatus }
   | { method: "menu"; params: { command: MenuCommand } };
 
@@ -341,7 +673,8 @@ export type MenuCommand =
   | "zoom-in"
   | "zoom-out"
   | "zoom-fit"
-  | "export";
+  | "export"
+  | "settings";
 
 export interface RpcFailure {
   code: number;
@@ -359,12 +692,20 @@ export interface Bridge {
   chooseMedia(kind: "files" | "folder"): Promise<string[]>;
   chooseProjectToOpen(): Promise<string | null>;
   chooseProjectToCreate(defaultName: string): Promise<string | null>;
+  /** A folder to look for offline media in; null if cancelled. */
+  chooseFolder(title: string): Promise<string | null>;
+  /** One replacement file for offline media; null if cancelled. */
+  chooseFile(title: string): Promise<string | null>;
+  /** Save a text report (results summary); returns where, null if cancelled. */
+  saveReport(defaultName: string, contents: string): Promise<string | null>;
   /** Where to write an export; null if cancelled. */
   chooseExportPath(defaultName: string, format: ExportFormat): Promise<string | null>;
   /** Reveal a file this app exported in the system file manager. */
   showInFolder(path: string): Promise<void>;
   /** Filesystem path of a file dropped onto the window. */
   pathForFile(file: File): string;
+  /** A poster frame (PNG) from the engine's cache. */
+  readThumbnail(path: string): Promise<Uint8Array>;
   /** Bytes [offset, offset + length) of a waveform file inside the analysis cache. */
   readPeaks(directory: string, file: string, offset: number, length: number): Promise<Uint8Array>;
   platform: string;

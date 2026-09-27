@@ -1,0 +1,13 @@
+/* Values the design uses that SYNCORA_DESIGN_TOKENS.json does not name yet (tokens.css is generated: not edited).
+   Each one cites where it appears in the handoff. */
+:root {
+  /* Component map §1 Button: ghost / destructive hover and active tints of --sy-brand-primary. */
+  --sy-tint-red-14: rgba(236, 48, 19, 0.14);
+  --sy-tint-red-24: rgba(236, 48, 19, 0.24);
+  /* Screen spec S16 ErrorDialog and ErrorToast shadows. */
+  --sy-shadow-dialog: 0 24px 64px rgba(0, 0, 0, 0.5);
+  --sy-shadow-toast: 0 8px 24px rgba(0, 0, 0, 0.4);
+  /* Screen spec S08: review row inset and S04 selected card outline. */
+  --sy-review-inset: inset 0 0 0 2px var(--sy-status-warning);
+  --sy-selected-inset: inset 0 0 0 2px var(--sy-text);
+}

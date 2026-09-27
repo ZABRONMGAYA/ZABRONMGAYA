@@ -1,0 +1,110 @@
+/* S13 Settings (full-window sheet) and dialog content. */
+.sy-settings {
+  position: fixed;
+  inset: 0;
+  z-index: var(--sy-z-modal);
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  background: var(--sy-bg);
+}
+.sy-settings__nav {
+  background: var(--sy-panel);
+  border-right: 1px solid var(--sy-border);
+  padding-bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+}
+.sy-settings__title {
+  height: 56px;
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  font-size: 18px;
+  font-weight: 800;
+}
+.sy-settings__item {
+  padding: 8px 20px;
+  border: 0;
+  background: transparent;
+  color: var(--sy-text-2);
+  text-align: left;
+  font-size: 13px;
+  cursor: pointer;
+}
+.sy-settings__item:hover:not(:disabled) {
+  background: var(--sy-hover);
+}
+.sy-settings__item[aria-current="page"] {
+  background: var(--sy-surface);
+  color: var(--sy-text);
+  font-weight: 800;
+  box-shadow: inset 3px 0 0 var(--sy-brand-primary);
+}
+.sy-settings__item:disabled {
+  opacity: var(--sy-opacity-disabled);
+  cursor: default;
+}
+.sy-settings__pane {
+  position: relative;
+  padding: 48px 64px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 920px;
+  overflow: auto;
+}
+.sy-settings__close {
+  position: fixed;
+  top: 12px;
+  right: 16px;
+}
+.sy-settings__h1 {
+  margin: 0;
+  font-size: 32px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+.sy-settings__sub {
+  margin: 0 0 16px;
+  color: var(--sy-text-2);
+}
+.sy-settings__facts {
+  margin-bottom: 16px;
+  grid-template-columns: 140px 1fr;
+}
+.sy-settings__number {
+  width: 72px;
+}
+.sy-settings__value {
+  min-width: 40px;
+  font-weight: 800;
+}
+
+.sy-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+.sy-dups {
+  display: flex;
+  flex-direction: column;
+}
+.sy-dups__row {
+  display: grid;
+  grid-template-columns: 1fr 80px auto auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--sy-border);
+  font-size: 12px;
+  color: var(--sy-text);
+}
+.sy-dups__files {
+  min-width: 0;
+}
+.sy-dups__state {
+  font-size: 11px;
+  color: var(--sy-text-3);
+}

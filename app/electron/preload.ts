@@ -17,10 +17,14 @@ const bridge: Bridge = {
   chooseMedia: (kind) => ipcRenderer.invoke("dialog:media", kind),
   chooseProjectToOpen: () => ipcRenderer.invoke("dialog:open-project"),
   chooseProjectToCreate: (defaultName) => ipcRenderer.invoke("dialog:create-project", defaultName),
+  chooseFolder: (title) => ipcRenderer.invoke("dialog:folder", title),
+  chooseFile: (title) => ipcRenderer.invoke("dialog:file", title),
+  saveReport: (defaultName, contents) => ipcRenderer.invoke("dialog:save-report", defaultName, contents),
   chooseExportPath: (defaultName, format) => ipcRenderer.invoke("dialog:export", defaultName, format),
   showInFolder: (file) => ipcRenderer.invoke("shell:show", file),
   pathForFile: (file) => webUtils.getPathForFile(file),
   readPeaks: (directory, file, offset, length) => ipcRenderer.invoke("peaks:read", directory, file, offset, length),
+  readThumbnail: (file) => ipcRenderer.invoke("thumb:read", file),
   platform: process.platform,
 };
 

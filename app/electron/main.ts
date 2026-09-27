@@ -17,7 +17,9 @@ import { EngineProcess, RpcError, engineCommand } from "./engine";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const allowed = new Set<string>(ENGINE_METHODS);
-const PROJECT_FILTER = { name: "Multicam Sync project", extensions: ["mcsync"] };
+const PROJECT_FILTER = { name: "Syncora project", extensions: ["syncora"] };
+// Projects from Multicam Sync 0.1 open (and are upgraded) too.
+const OPEN_FILTER = { name: "Syncora project", extensions: ["syncora", "mcsync"] };
 const EXPORT_FILTERS: Record<"xmeml" | "fcpxml", Electron.FileFilter> = {
   xmeml: { name: "FCP 7 XML (Premiere Pro, DaVinci Resolve)", extensions: ["xml"] },
   fcpxml: { name: "FCPXML (DaVinci Resolve, Final Cut Pro)", extensions: ["fcpxml"] },
@@ -50,8 +52,8 @@ function createWindow(): BrowserWindow {
     height: 900,
     minWidth: 1024,
     minHeight: 640,
-    backgroundColor: "#15171a",
-    title: "Multicam Sync",
+    backgroundColor: "#201e1d", // --sy-bg: no white flash before the renderer paints
+    title: "Syncora",
     show: false,
     webPreferences: {
       preload: path.join(here, "preload.cjs"),
@@ -92,6 +94,8 @@ function buildMenu(): void {
         { type: "separator" },
         { label: "Export XML…", accelerator: "CmdOrCtrl+E", click: menuCommand("export") },
         { type: "separator" },
+        { label: "Settings…", accelerator: "CmdOrCtrl+,", click: menuCommand("settings") },
+        { type: "separator" },
         { label: "Close Project", accelerator: "CmdOrCtrl+W", click: menuCommand("close-project") },
         ...(isMac ? [] : [{ type: "separator" as const }, { role: "quit" as const }]),
       ],
@@ -111,7 +115,7 @@ function buildMenu(): void {
     },
     {
       label: "Sync",
-      submenu: [{ label: "Synchronise", accelerator: "CmdOrCtrl+Enter", click: menuCommand("sync") }],
+      submenu: [{ label: "Sync All", accelerator: "Shift+S", click: menuCommand("sync") }],
     },
     {
       label: "View",
@@ -149,13 +153,31 @@ function registerIpc(): void {
     return result.canceled ? [] : result.filePaths;
   });
   ipcMain.handle("dialog:open-project", async () => {
-    const result = await dialog.showOpenDialog(window!, { properties: ["openFile"], filters: [PROJECT_FILTER] });
+    const result = await dialog.showOpenDialog(window!, { properties: ["openFile"], filters: [OPEN_FILTER] });
     return result.canceled ? null : (result.filePaths[0] ?? null);
+  });
+  ipcMain.handle("dialog:folder", async (_e, title: string) => {
+    const result = await dialog.showOpenDialog(window!, { title, properties: ["openDirectory"] });
+    return result.canceled ? null : (result.filePaths[0] ?? null);
+  });
+  ipcMain.handle("dialog:file", async (_e, title: string) => {
+    const result = await dialog.showOpenDialog(window!, { title, properties: ["openFile"] });
+    return result.canceled ? null : (result.filePaths[0] ?? null);
+  });
+  ipcMain.handle("dialog:save-report", async (_e, defaultName: string, contents: string) => {
+    const result = await dialog.showSaveDialog(window!, {
+      title: "Save sync report",
+      defaultPath: `${defaultName}.json`,
+      filters: [{ name: "JSON report", extensions: ["json"] }],
+    });
+    if (result.canceled || !result.filePath) return null;
+    await fs.writeFile(result.filePath, contents, "utf-8");
+    return result.filePath;
   });
   ipcMain.handle("dialog:create-project", async (_e, defaultName: string) => {
     const result = await dialog.showSaveDialog(window!, {
       title: "New project",
-      defaultPath: `${defaultName}.mcsync`,
+      defaultPath: `${defaultName}.syncora`,
       filters: [PROJECT_FILTER],
     });
     return result.canceled || !result.filePath ? null : result.filePath;
@@ -172,6 +194,16 @@ function registerIpc(): void {
   ipcMain.handle("shell:show", (_e, file: string) => {
     const full = path.resolve(file);
     if (exported.has(full)) shell.showItemInFolder(full);
+  });
+  // Poster frames live in the engine's cache too: only PNG files under its thumbs folder can be read.
+  ipcMain.handle("thumb:read", async (_e, file: string) => {
+    const cacheDir = engine.status.hello?.cache_dir;
+    if (!cacheDir) throw new Error("engine not ready");
+    const root = path.resolve(cacheDir, "thumbs") + path.sep;
+    const full = path.resolve(file);
+    if (!full.startsWith(root) || !full.endsWith(".png")) throw new Error("path outside the cache");
+    const data = await fs.readFile(full);
+    return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
   });
   // Waveform overviews live in the engine's cache; only files inside it can be read.
   ipcMain.handle("peaks:read", async (_e, directory: string, file: string, offset: number, length: number) => {

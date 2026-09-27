@@ -1,24 +1,26 @@
 /* Multicam Sync: one dark theme, tuned for long sessions next to an NLE. */
 :root {
-  --bg: #131518;
-  --panel: #1a1d21;
-  --panel-2: #20242a;
-  --panel-3: #282d34;
-  --border: #2d3239;
-  --text: #e4e7eb;
-  --muted: #8a929d;
-  --accent: #4d8dff;
-  --accent-text: #ffffff;
-  --ok: #3cc98a;
-  --warn: #f0a42c;
-  --error: #ef5a5f;
-  --manual: #a98bf7;
-  --video: #294a70;
-  --audio: #2c5a46;
-  --wave: rgba(226, 236, 248, 0.5); /* read by the timeline canvas, like --video, --audio, --warn, --manual */
-  --radius: 6px;
-  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  /* The timeline, inspector and export dialog predate Syncora: their names map onto Syncora tokens. */
+  --bg: var(--sy-bg);
+  --panel: var(--sy-panel);
+  --panel-2: var(--sy-surface);
+  --panel-3: var(--sy-elevated);
+  --border: var(--sy-border);
+  --text: var(--sy-text);
+  --muted: var(--sy-text-3);
+  --accent: var(--sy-brand-primary);
+  --accent-text: var(--sy-text);
+  --ok: var(--sy-status-success);
+  --warn: var(--sy-status-warning);
+  --error: var(--sy-status-error);
+  --manual: var(--sy-brand-accent);
+  /* read by the timeline canvas (draw.ts readPalette), like --warn and --manual */
+  --video: var(--sy-timeline-video);
+  --audio: var(--sy-timeline-audio-head);
+  --wave: var(--sy-timeline-wave);
+  --radius: var(--sy-radius);
+  --font: var(--sy-font);
+  --mono: var(--sy-mono);
   color-scheme: dark;
 }
 
@@ -75,63 +77,63 @@ h3 {
 
 /* ---------------------------------------------------------------- controls */
 
-button,
-select,
-input {
+:where(.workspace, .modal-backdrop) button,
+:where(.workspace, .modal-backdrop) select,
+:where(.workspace, .modal-backdrop) input {
   font: inherit;
   color: var(--text);
 }
 
-button {
+:where(.workspace, .modal-backdrop) button {
   background: var(--panel-3);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--sy-radius);
   padding: 5px 11px;
   cursor: pointer;
   white-space: nowrap;
 }
 
-button:hover:not(:disabled) {
-  border-color: #454c55;
-  background: #30363e;
+:where(.workspace, .modal-backdrop) button:hover:not(:disabled) {
+  border-color: var(--sy-text-3);
+  background: var(--sy-hover);
 }
 
-button:disabled {
+:where(.workspace, .modal-backdrop) button:disabled {
   opacity: 0.45;
   cursor: default;
 }
 
-button:focus-visible,
-select:focus-visible,
-input:focus-visible {
+:where(.workspace, .modal-backdrop) button:focus-visible,
+:where(.workspace, .modal-backdrop) select:focus-visible,
+:where(.workspace, .modal-backdrop) input:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
 
-button.primary {
+:where(.workspace, .modal-backdrop) button.primary {
   background: var(--accent);
   border-color: var(--accent);
   color: var(--accent-text);
   font-weight: 600;
 }
 
-button.primary:hover:not(:disabled) {
-  background: #6a9fff;
+:where(.workspace, .modal-backdrop) button.primary:hover:not(:disabled) {
+  background: var(--sy-brand-red-500);
 }
 
-button.small {
+:where(.workspace, .modal-backdrop) button.small {
   padding: 2px 7px;
   font-size: 11px;
 }
 
-button.link {
+:where(.workspace, .modal-backdrop) button.link {
   background: none;
   border: none;
   padding: 0;
   color: var(--accent);
 }
 
-button.icon {
+:where(.workspace, .modal-backdrop) button.icon {
   background: none;
   border: none;
   padding: 0 4px;
@@ -140,31 +142,31 @@ button.icon {
   color: var(--muted);
 }
 
-select,
-input {
+:where(.workspace, .modal-backdrop) select,
+:where(.workspace, .modal-backdrop) input {
   background: var(--panel-2);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--sy-radius);
   padding: 4px 6px;
 }
 
-label {
+:where(.workspace, .modal-backdrop) label {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   color: var(--muted);
 }
 
-label.check {
+:where(.workspace, .modal-backdrop) label.check {
   cursor: pointer;
 }
 
-.badge {
+:where(.workspace, .modal-backdrop) .badge {
   display: inline-block;
   font-size: 10px;
   font-weight: 600;
   padding: 0 5px;
-  border-radius: 3px;
+  border-radius: var(--sy-radius);
   background: var(--panel-3);
   color: var(--muted);
   margin-left: 6px;
@@ -172,34 +174,34 @@ label.check {
   line-height: 16px;
 }
 
-.badge.warn {
-  background: rgba(240, 164, 44, 0.18);
+:where(.workspace, .modal-backdrop) .badge.warn {
+  background: color-mix(in srgb, var(--sy-status-warning) 18%, transparent);
   color: var(--warn);
 }
 
-.badge.ref {
-  background: rgba(77, 141, 255, 0.25);
-  color: #b9d1ff;
+:where(.workspace, .modal-backdrop) .badge.ref {
+  background: color-mix(in srgb, var(--sy-brand-primary) 25%, transparent);
+  color: var(--sy-brand-accent);
 }
 
-.badge.drag {
-  background: rgba(0, 0, 0, 0.55);
-  color: #fff;
+:where(.workspace, .modal-backdrop) .badge.drag {
+  background: color-mix(in srgb, var(--sy-backdrop) 55%, transparent);
+  color: var(--sy-text);
   font-family: var(--mono);
 }
 
-.notice {
-  border-radius: var(--radius);
+:where(.workspace, .modal-backdrop) .notice {
+  border-radius: var(--sy-radius);
   padding: 10px 12px;
   margin-top: 16px;
 }
 
-.notice.error {
-  background: rgba(239, 90, 95, 0.12);
-  border: 1px solid rgba(239, 90, 95, 0.4);
+:where(.workspace, .modal-backdrop) .notice.error {
+  background: color-mix(in srgb, var(--sy-status-error) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--sy-status-error) 40%, transparent);
 }
 
-.notice pre {
+:where(.workspace, .modal-backdrop) .notice pre {
   white-space: pre-wrap;
   font-size: 11px;
   max-height: 160px;
@@ -208,16 +210,11 @@ label.check {
 
 /* ------------------------------------------------------------------ layout */
 
-.app {
-  display: grid;
-  grid-template-rows: 1fr auto;
-  height: 100%;
-}
-
 .workspace {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  height: 100%;
 }
 
 .workspace.dropping::after {
@@ -227,8 +224,8 @@ label.check {
   display: grid;
   place-items: center;
   border: 2px dashed var(--accent);
-  border-radius: 12px;
-  background: rgba(77, 141, 255, 0.12);
+  border-radius: var(--sy-radius);
+  background: color-mix(in srgb, var(--sy-brand-primary) 12%, transparent);
   color: var(--text);
   font-size: 18px;
   font-weight: 600;
@@ -239,222 +236,8 @@ label.check {
 .panes {
   flex: 1;
   display: grid;
-  grid-template-columns: 260px minmax(0, 1fr) 320px;
+  grid-template-columns: minmax(0, 1fr) 340px;
   min-height: 0;
-}
-
-/* ----------------------------------------------------------------- welcome */
-
-.welcome {
-  display: grid;
-  place-items: center;
-  padding: 24px;
-  overflow: auto;
-}
-
-.welcome-card {
-  max-width: 560px;
-  width: 100%;
-}
-
-.welcome-card h1 {
-  font-size: 26px;
-  margin-bottom: 8px;
-}
-
-.welcome-actions {
-  display: flex;
-  gap: 10px;
-  margin: 22px 0;
-}
-
-.welcome-actions button {
-  padding: 9px 18px;
-  font-size: 14px;
-}
-
-.recent ul {
-  list-style: none;
-  padding: 0;
-  margin: 8px 0 0;
-}
-
-.recent li {
-  display: flex;
-  gap: 10px;
-  align-items: baseline;
-  padding: 4px 0;
-}
-
-.recent .path {
-  font-size: 11px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* ----------------------------------------------------------------- toolbar */
-
-.toolbar {
-  display: flex;
-  align-items: center;
-  gap: 18px;
-  padding: 8px 12px;
-  background: var(--panel);
-  border-bottom: 1px solid var(--border);
-  min-height: 48px;
-}
-
-.toolbar .group {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.toolbar .group.grow {
-  flex: 1;
-  min-width: 0;
-}
-
-.project-name {
-  font-weight: 600;
-  margin-right: 6px;
-  max-width: 200px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.job {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.progress {
-  width: 140px;
-  height: 6px;
-  border-radius: 3px;
-  background: var(--panel-3);
-  overflow: hidden;
-  flex: none;
-}
-
-.progress .bar {
-  height: 100%;
-  background: var(--accent);
-  transition: width 0.2s;
-}
-
-.job-message {
-  color: var(--muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* --------------------------------------------------------------- media bin */
-
-.bin {
-  background: var(--panel);
-  border-right: 1px solid var(--border);
-  overflow-y: auto;
-  padding: 8px 0;
-}
-
-.bin.empty {
-  padding: 16px;
-}
-
-.device + .device {
-  margin-top: 8px;
-}
-
-.device-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 12px;
-}
-
-.device-name {
-  font-weight: 600;
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  cursor: text;
-}
-
-.device-header input {
-  flex: 1;
-  min-width: 0;
-}
-
-.device-header .kind {
-  font-size: 11px;
-  padding: 1px 4px;
-}
-
-.device ul {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.clip-row {
-  display: grid;
-  grid-template-columns: 10px 1fr;
-  column-gap: 8px;
-  padding: 4px 12px;
-  cursor: pointer;
-}
-
-.clip-row:hover {
-  background: var(--panel-2);
-}
-
-.clip-row.selected {
-  background: rgba(77, 141, 255, 0.18);
-}
-
-.clip-row .status-dot {
-  grid-row: 1 / span 3;
-  margin-top: 5px;
-}
-
-.clip-row .clip-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.clip-row .clip-meta {
-  font-size: 11px;
-  color: var(--muted);
-}
-
-.clip-row .audio-choice {
-  font-size: 11px;
-  padding: 1px 4px;
-  margin-top: 2px;
-  justify-self: start;
-}
-
-.status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--muted);
-}
-
-.status-dot.synced {
-  background: var(--ok);
-}
-
-.status-dot.needs_review {
-  background: var(--warn);
 }
 
 /* ---------------------------------------------------------------- timeline */
@@ -546,7 +329,7 @@ label.check {
 }
 
 .track-header.overflow {
-  background: rgba(240, 164, 44, 0.06);
+  background: color-mix(in srgb, var(--sy-status-warning) 6%, transparent);
 }
 
 .kind-icon {
@@ -612,14 +395,14 @@ label.check {
 }
 
 .chip {
-  border-radius: 12px;
+  border-radius: var(--sy-radius);
   padding: 2px 10px;
   font-size: 12px;
 }
 
 .chip.selected {
   border-color: var(--accent);
-  background: rgba(77, 141, 255, 0.2);
+  background: color-mix(in srgb, var(--sy-brand-primary) 20%, transparent);
 }
 
 .chip.excluded {
@@ -652,7 +435,7 @@ label.check {
 
 .count {
   background: var(--panel-3);
-  border-radius: 9px;
+  border-radius: var(--sy-radius);
   padding: 0 7px;
   font-size: 11px;
   color: var(--muted);
@@ -671,7 +454,7 @@ label.check {
   flex-direction: column;
   padding: 5px 8px 5px 10px;
   border-left: 3px solid var(--warn);
-  border-radius: 3px;
+  border-radius: var(--sy-radius);
   margin-bottom: 4px;
   background: var(--panel-2);
   cursor: pointer;
@@ -688,7 +471,7 @@ label.check {
 }
 
 .review-item.selected {
-  background: rgba(77, 141, 255, 0.18);
+  background: color-mix(in srgb, var(--sy-brand-primary) 18%, transparent);
 }
 
 .review-item .reason {
@@ -716,7 +499,7 @@ label.check {
 }
 
 .pill {
-  border-radius: 10px;
+  border-radius: var(--sy-radius);
   padding: 1px 9px;
   font-size: 11px;
   font-weight: 600;
@@ -724,12 +507,12 @@ label.check {
 }
 
 .pill.synced {
-  background: rgba(60, 201, 138, 0.18);
+  background: color-mix(in srgb, var(--sy-status-success) 18%, transparent);
   color: var(--ok);
 }
 
 .pill.needs_review {
-  background: rgba(240, 164, 44, 0.18);
+  background: color-mix(in srgb, var(--sy-status-warning) 18%, transparent);
   color: var(--warn);
 }
 
@@ -770,7 +553,7 @@ label.check {
 
 .flags li {
   padding: 6px 8px;
-  border-radius: 4px;
+  border-radius: var(--sy-radius);
   background: var(--panel-2);
   font-size: 12px;
 }
@@ -779,11 +562,11 @@ label.check {
 .flags li.timecode_disagrees,
 .flags li.ambiguous,
 .flags li.manual_conflict {
-  background: rgba(239, 90, 95, 0.12);
+  background: color-mix(in srgb, var(--sy-status-error) 12%, transparent);
 }
 
 .flags li.manual {
-  background: rgba(169, 139, 247, 0.12);
+  background: color-mix(in srgb, var(--sy-brand-accent) 12%, transparent);
 }
 
 .actions {
@@ -824,7 +607,7 @@ label.check {
   gap: 8px;
   align-items: center;
   padding: 4px 6px;
-  border-radius: 4px;
+  border-radius: var(--sy-radius);
   background: var(--panel-2);
 }
 
@@ -880,7 +663,7 @@ label.check {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.55);
+  background: color-mix(in srgb, var(--sy-backdrop) 55%, transparent);
   display: grid;
   place-items: center;
   z-index: 80;
@@ -893,9 +676,9 @@ label.check {
   overflow-y: auto;
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--sy-radius);
   padding: 18px 20px;
-  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.55);
+  box-shadow: var(--sy-shadow-dialog);
   user-select: text;
 }
 
@@ -921,7 +704,7 @@ label.check {
   gap: 10px;
   padding: 10px 12px;
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--sy-radius);
   margin-bottom: 8px;
   color: var(--text);
   cursor: pointer;
@@ -929,7 +712,7 @@ label.check {
 
 .format.chosen {
   border-color: var(--accent);
-  background: rgba(77, 141, 255, 0.1);
+  background: color-mix(in srgb, var(--sy-brand-primary) 10%, transparent);
 }
 
 .format span {
@@ -970,8 +753,8 @@ label.check {
 
 .plain.warnings li {
   padding: 6px 8px;
-  border-radius: 4px;
-  background: rgba(240, 164, 44, 0.1);
+  border-radius: var(--sy-radius);
+  background: color-mix(in srgb, var(--sy-status-warning) 10%, transparent);
 }
 
 input[aria-invalid="true"] {
@@ -981,93 +764,4 @@ input[aria-invalid="true"] {
 .error-text {
   color: var(--error);
   margin: 0;
-}
-
-/* ------------------------------------------------------ status bar, toasts */
-
-.statusbar {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 3px 12px;
-  font-size: 11px;
-  color: var(--muted);
-  background: var(--panel);
-  border-top: 1px solid var(--border);
-  min-width: 0;
-}
-
-.statusbar .dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--muted);
-  flex: none;
-}
-
-.statusbar .dot.ready {
-  background: var(--ok);
-}
-
-.statusbar .dot.starting {
-  background: var(--warn);
-}
-
-.statusbar .dot.crashed {
-  background: var(--error);
-}
-
-.statusbar .path {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
-}
-
-.statusbar .right {
-  margin-left: auto;
-  white-space: nowrap;
-}
-
-/* Bottom centre, over the timeline: never on top of the inspector's or the bin's controls. */
-.toasts {
-  position: fixed;
-  left: 50%;
-  transform: translateX(-50%);
-  bottom: 34px;
-  display: grid;
-  justify-items: center;
-  gap: 8px;
-  z-index: 100;
-  width: min(520px, calc(100vw - 32px));
-  pointer-events: none;
-}
-
-.toast {
-  pointer-events: auto;
-}
-
-.toast {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 9px 10px 9px 12px;
-  border-radius: var(--radius);
-  background: var(--panel-3);
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--accent);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
-  user-select: text;
-}
-
-.toast span {
-  flex: 1;
-}
-
-.toast.success {
-  border-left-color: var(--ok);
-}
-
-.toast.error {
-  border-left-color: var(--error);
 }

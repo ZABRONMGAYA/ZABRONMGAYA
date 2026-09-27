@@ -25,7 +25,7 @@ declare global {
 }
 
 export function bridge(): Bridge {
-  if (!window.mcsync) throw new Error("Multicam Sync must run inside its desktop app");
+  if (!window.mcsync) throw new Error("Syncora must run inside its desktop app");
   return window.mcsync;
 }
 

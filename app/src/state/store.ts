@@ -24,6 +24,8 @@ import type {
 import { formatOffset } from "../lib/format";
 import { type View, anchorClip, clampView, fitView, offsetForStart, zoomAround } from "../features/timeline/geometry";
 import { forgetPeaks } from "../features/timeline/peaks";
+import { useProd } from "./production";
+import { useThumbs } from "./thumbs";
 
 export interface JobState {
   id: string;
@@ -39,11 +41,12 @@ export interface Toast {
   text: string;
 }
 
-const RECENT_KEY = "mcsync.recentProjects";
+const RECENT_KEY = "syncora.recentProjects";
+const LEGACY_RECENT_KEY = "mcsync.recentProjects";
 
 function loadRecent(): string[] {
   try {
-    return JSON.parse(localStorage.getItem(RECENT_KEY) ?? "[]") as string[];
+    return JSON.parse(localStorage.getItem(RECENT_KEY) ?? localStorage.getItem(LEGACY_RECENT_KEY) ?? "[]") as string[];
   } catch {
     return [];
   }
@@ -220,6 +223,7 @@ export const useApp = create<AppState>((set, get) => ({
     await get().run(async () => {
       await call("project.close", {});
       set({ project: null, timeline: null, media: { clips: [], devices: [] }, selected: null, lastSync: null });
+      useProd.getState().reset(null);
     });
   },
 
@@ -248,21 +252,14 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   async importPaths(paths) {
-    await get().run(async () => {
-      const { job_id } = await call("media.import", { paths });
-      trackJob(job_id, "import");
-    });
+    await useProd.getState().addMedia(paths);
   },
 
   // -------------------------------------------------------------- sync
 
   async sync() {
-    const project = get().project;
-    if (!project) return;
-    await get().run(async () => {
-      const { job_id } = await call("sync.run", {});
-      trackJob(job_id, "sync");
-    });
+    if (!get().project) return;
+    await useProd.getState().startSync();
   },
 
   async cancelJob(id) {
@@ -477,12 +474,42 @@ function afterOpen(project: ProjectSummary): void {
     media: { clips: [], devices: [] },
   });
   useApp.getState().invalidatePeaks();
+  useThumbs.getState().clear();
+  useProd.getState().reset(project);
 }
 
-function trackJob(id: string, kind: string): void {
-  useApp.setState((s) => ({
-    jobs: { ...s.jobs, [id]: { id, kind, progress: 0, message: "Starting…", status: "running" } },
-  }));
+let peaksTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Waveforms reload at most every few seconds while thousands of clips are being analysed. */
+function schedulePeaks(): void {
+  if (peaksTimer) return;
+  peaksTimer = setTimeout(() => {
+    peaksTimer = null;
+    useApp.getState().invalidatePeaks();
+  }, 3000);
+}
+
+async function afterSync(result: { status: string; error?: string; timeline?: Timeline }): Promise<void> {
+  const app = useApp.getState();
+  const prod = useProd.getState();
+  if (result.status === "completed") {
+    if (result.timeline) useApp.setState({ timeline: result.timeline, matches: {} });
+    app.invalidatePeaks();
+    await Promise.all([prod.loadSummary(), prod.loadIndex(), app.refresh()]);
+    const summary = useProd.getState().summary;
+    if (summary) {
+      const c = summary.counts;
+      const review = c.review;
+      app.toast(
+        "success",
+        `Synchronised ${c.synchronized} of ${summary.clips} clips${review ? `; ${review} to review` : ""}.`,
+      );
+    }
+    useProd.setState({ syncView: "results" });
+    app.fit();
+  } else if (result.status === "failed") {
+    app.toast("error", `Synchronisation failed: ${result.error ?? "see the activity log"}`);
+  }
 }
 
 function finishJob(id: string, status: JobState["status"]): void {
@@ -542,6 +569,23 @@ function handleEvent(event: EngineEvent): void {
       break;
     case "media.imported":
       break;
+    case "media.analyzed":
+      schedulePeaks();
+      break;
+    case "media.thumbnails":
+      useThumbs.getState().arrived(event.params.thumbnails);
+      break;
+    case "pipeline.progress":
+      useProd.getState().onPipeline(event.params);
+      break;
+    case "pipeline.matches":
+      break;
+    case "pipeline.error":
+      app.toast("error", `Processing stopped: ${event.params.error}`);
+      break;
+    case "pipeline.sync_finished":
+      void afterSync(event.params);
+      break;
     case "menu":
       runMenu(event.params.command);
       break;
@@ -589,6 +633,9 @@ function runMenu(command: MenuCommand): void {
       break;
     case "export":
       if (hasProject) app.openExport();
+      break;
+    case "settings":
+      useProd.getState().openSettings();
       break;
   }
 }

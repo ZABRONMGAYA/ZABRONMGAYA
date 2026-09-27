@@ -84,7 +84,7 @@ export class EngineProcess extends EventEmitter {
     child.on("error", (err) => this.onExit(null, err.message));
     child.on("exit", (code) => this.onExit(code, null));
     try {
-      const hello = (await this.request("engine.hello", { client: "multicam-sync-app" }, 60_000)) as Hello;
+      const hello = (await this.request("engine.hello", { client: "syncora-app" }, 60_000)) as Hello;
       if (hello.protocol !== PROTOCOL_VERSION) {
         throw new RpcError(-32000, `engine protocol ${hello.protocol}, app expects ${PROTOCOL_VERSION}`);
       }

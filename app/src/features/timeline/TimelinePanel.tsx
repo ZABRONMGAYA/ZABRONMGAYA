@@ -1,7 +1,10 @@
 // The timeline: group tabs, zoom, the synchronised tracks, and the clips that could not be placed.
 import { useEffect } from "react";
 
+import type { Session } from "../../api/contract";
+import { Select } from "../../design-system/components";
 import { formatDuration, formatTime, parseRate } from "../../lib/format";
+import { useProd } from "../../state/production";
 import { displayedGroup, findClip, useApp, usePick } from "../../state/store";
 import { Tracks } from "./Tracks";
 import { frameDuration } from "./geometry";
@@ -56,6 +59,13 @@ function UnplacedStrip() {
   );
 }
 
+/** A sync group's name: its session's label when there is one. */
+function groupLabel(group: number, sessions: Session[]): string {
+  const session = sessions.find((s) => s.group_no === group && s.source === "auto");
+  if (session) return session.label + (group === 0 ? " (reference)" : "");
+  return group === 0 ? "Reference group" : `Group ${group + 1}`;
+}
+
 export function TimelinePanel() {
   const { timeline, group, setGroup, view, timelineWidth, cursorS, fit, media } = usePick(
     "timeline",
@@ -69,29 +79,42 @@ export function TimelinePanel() {
   );
   useNudgeKeys();
   const current = displayedGroup({ timeline, group });
+  const sessions = useProd((s) => s.sessions);
 
   return (
     <section className="timeline" data-testid="timeline">
       <div className="timeline-bar">
-        <div className="tabs" role="tablist">
-          {timeline?.groups.map((g) => (
-            <button
-              key={g.group}
-              role="tab"
-              aria-selected={g.group === current?.group}
-              className={g.group === current?.group ? "tab active" : "tab"}
-              onClick={() => setGroup(g.group)}
-              title={
-                g.group === 0
-                  ? "The reference recording and everything synced to it"
-                  : "Clips synced to each other but not to the reference: place one of them by hand to join the main timeline"
-              }
-              data-testid={`group-${g.group}`}
-            >
-              {g.group === 0 ? "Main" : `Unlinked ${g.group}`} · {g.clips.length}
-            </button>
-          ))}
-        </div>
+        {(timeline?.groups.length ?? 0) <= 6 ? (
+          <div className="tabs" role="tablist">
+            {timeline?.groups.map((g) => (
+              <button
+                key={g.group}
+                role="tab"
+                aria-selected={g.group === current?.group}
+                className={g.group === current?.group ? "tab active" : "tab"}
+                onClick={() => setGroup(g.group)}
+                title={
+                  g.group === 0
+                    ? "The reference recording and everything synced to it"
+                    : "A separate sync group (another session): its clips are synced to each other"
+                }
+                data-testid={`group-${g.group}`}
+              >
+                {groupLabel(g.group, sessions)} · {g.clips.length}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <Select
+            label="Sync group"
+            value={current?.group ?? 0}
+            onChange={(g) => setGroup(g)}
+            options={(timeline?.groups ?? []).map((g) => ({
+              value: g.group,
+              label: `${groupLabel(g.group, sessions)} · ${g.clips.length} clips`,
+            }))}
+          />
+        )}
         <div className="grow" />
         {cursorS !== null && (
           <span className="muted" data-testid="cursor-time">

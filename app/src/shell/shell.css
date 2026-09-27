@@ -1,0 +1,178 @@
+/* SH-1 top bar, SH-2 status bar, app frame. */
+.sy-app {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  height: 100vh;
+  background: var(--sy-bg);
+}
+.sy-app--home {
+  grid-template-rows: 1fr auto;
+}
+.sy-main {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+}
+
+.sy-topbar {
+  height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 12px;
+  background: var(--sy-panel);
+  border-bottom: 1px solid var(--sy-border);
+}
+.sy-topbar__name {
+  font-size: 13px;
+  font-weight: 800;
+  white-space: nowrap;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sy-stage-tabs {
+  display: flex;
+  height: 44px;
+  margin-left: 24px;
+}
+.sy-stage-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 14px;
+  border: 0;
+  background: transparent;
+  color: var(--sy-text-3);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  position: relative;
+}
+.sy-stage-tab:hover {
+  color: var(--sy-text);
+}
+.sy-stage-tab[aria-current="page"] {
+  color: var(--sy-text);
+  background: var(--sy-surface);
+  box-shadow: inset 0 -2px 0 var(--sy-brand-primary);
+}
+.sy-stage-tab[aria-disabled="true"] {
+  opacity: var(--sy-opacity-disabled);
+  cursor: default;
+}
+.sy-stage-tab__num {
+  font-size: 10px;
+  color: var(--sy-text-3);
+}
+.sy-stage-tab__dot {
+  width: 6px;
+  height: 6px;
+  background: var(--sy-status-warning);
+}
+.sy-topbar__right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--sy-text-2);
+}
+.sy-syncall {
+  gap: 6px;
+}
+
+.sy-statusbar {
+  height: 26px;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 0 12px;
+  background: var(--sy-panel);
+  border-top: 1px solid var(--sy-border);
+  font-size: 11px;
+  color: var(--sy-text-2);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.sy-statusbar__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.sy-statusbar__item--warn {
+  color: var(--sy-status-warning);
+}
+.sy-statusbar__right {
+  margin-left: auto;
+  display: flex;
+  gap: 20px;
+}
+.sy-dot {
+  width: 6px;
+  height: 6px;
+  background: var(--sy-status-success);
+}
+.sy-dot--warn {
+  background: var(--sy-status-warning);
+}
+.sy-dot--error {
+  background: var(--sy-status-error);
+}
+
+.sy-toasts {
+  position: fixed;
+  left: 50%;
+  bottom: 40px;
+  transform: translateX(-50%);
+  z-index: var(--sy-z-toast);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+}
+.sy-toast__icon--error {
+  color: var(--sy-status-error);
+}
+.sy-toast__icon--success {
+  color: var(--sy-status-success);
+}
+.sy-toast__icon--info {
+  color: var(--sy-text-2);
+}
+.sy-toast__text {
+  font-size: 13px;
+  line-height: 1.4;
+}
+.sy-toast__close {
+  border: 0;
+  background: transparent;
+  color: var(--sy-text-3);
+  cursor: pointer;
+  padding: 0;
+  height: 16px;
+}
+
+.sy-setting-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 32px;
+  padding: 16px 0;
+  border-top: 1px solid var(--sy-border);
+  align-items: center;
+}
+.sy-setting-row__title {
+  font-weight: 800;
+}
+.sy-setting-row__desc {
+  font-size: 12px;
+  color: var(--sy-text-2);
+  margin-top: 2px;
+  max-width: 560px;
+}
+.sy-setting-row__control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}

@@ -1,0 +1,182 @@
+/* Syncora tokens — generated from SYNCORA_DESIGN_TOKENS.json. Do not edit by hand. */
+@font-face {
+  font-family: Archivo;
+  font-weight: 400;
+  src: url(./fonts/Archivo-Regular.woff2) format("woff2");
+  font-display: block;
+}
+@font-face {
+  font-family: Archivo;
+  font-weight: 600;
+  src: url(./fonts/Archivo-SemiBold.woff2) format("woff2");
+  font-display: block;
+}
+@font-face {
+  font-family: Archivo;
+  font-weight: 800;
+  src: url(./fonts/Archivo-ExtraBold.woff2) format("woff2");
+  font-display: block;
+}
+:root {
+  --sy-brand-primary: #ec3013;
+  --sy-brand-secondary: #201e1d;
+  --sy-brand-paper: #f3f2f2;
+  --sy-brand-accent: #ff9783;
+  --sy-brand-red-500: #ff563c;
+  --sy-brand-red-600: #dd2b0f;
+  --sy-brand-red-700: #ae1800;
+  --sy-brand-red-800: #7c1405;
+  --sy-brand-red-900: #4d170e;
+  --sy-brand-white: #ffffff;
+  --sy-status-success: #3fb56f;
+  --sy-status-success-hover: #56c882;
+  --sy-status-success-pressed: #2e9a5b;
+  --sy-status-success-light: #1f7a45;
+  --sy-status-warning: #e8a93a;
+  --sy-status-warning-light: #8a5700;
+  --sy-status-error: #ff563c;
+  --sy-status-error-light: #ae1800;
+  --sy-status-info: #bab6b6;
+  --sy-status-info-light: #444141;
+  --sy-timeline-track: #262423;
+  --sy-timeline-track-alt: #2a2827;
+  --sy-timeline-ruler: #2d2b2b;
+  --sy-timeline-video: #444141;
+  --sy-timeline-video-head: #605d5d;
+  --sy-timeline-audio: #2d2b2b;
+  --sy-timeline-audio-head: #383535;
+  --sy-timeline-wave: #bab6b6;
+  --sy-timeline-wave-video: #7d7979;
+  --sy-timeline-ai: #7c1405;
+  --sy-timeline-ai-text: #ff9783;
+  --sy-timeline-transcript: #383535;
+  --sy-timeline-transcript-text: #d7d3d3;
+  --sy-timeline-marker-ai: #ec3013;
+  --sy-timeline-marker-user: #f3f2f2;
+  --sy-timeline-sync-point: #ff9783;
+  --sy-timeline-selection: #f3f2f2;
+  --sy-timeline-playhead: #ec3013;
+  --sy-timeline-review-edge: #e8a93a;
+  --sy-timeline-evidence-0: #2d2b2b;
+  --sy-timeline-evidence-1: #444141;
+  --sy-timeline-evidence-2: #7c1405;
+  --sy-timeline-evidence-3: #ec3013;
+  --sy-camera-letter-bg: #f3f2f2;
+  --sy-camera-letter-text: #201e1d;
+  --sy-camera-audio-letter: #bab6b6;
+  --sy-placeholder-tile-1: #444141;
+  --sy-placeholder-tile-2: #3d3a3a;
+  --sy-placeholder-tile-3: #383535;
+  --sy-placeholder-tile-4: #4a4646;
+  --sy-placeholder-tile-5: #413e3e;
+  --sy-speaker-1: #f3f2f2;
+  --sy-speaker-2: #bab6b6;
+  --sy-speaker-3: #7d7979;
+  --sy-speaker-4: #605d5d;
+  --sy-font: Archivo, system-ui, sans-serif;
+  --sy-mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace;
+  --sy-space-0: 0px;
+  --sy-space-1: 4px;
+  --sy-space-2: 8px;
+  --sy-space-3: 12px;
+  --sy-space-4: 16px;
+  --sy-space-6: 24px;
+  --sy-space-8: 32px;
+  --sy-space-12: 48px;
+  --sy-space-16: 64px;
+  --sy-dur-instant: 80ms;
+  --sy-dur-fast: 120ms;
+  --sy-dur-base: 180ms;
+  --sy-dur-slow: 280ms;
+  --sy-dur-snap: 240ms;
+  --sy-dur-logo: 2400ms;
+  --sy-dur-tooltipDelay: 500ms;
+  --sy-dur-toast: 6000ms;
+  --sy-dur-spinner: 800ms;
+  --sy-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --sy-ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  --sy-ease-linear: linear;
+  --sy-shadow-e0: none;
+  --sy-shadow-e1: 0 0 0 1px #444141, 0 4px 12px rgba(0, 0, 0, 0.35);
+  --sy-shadow-e2: 0 0 0 1px #605d5d, 0 8px 24px rgba(0, 0, 0, 0.4);
+  --sy-shadow-e3: 0 0 0 1px #605d5d, 0 24px 64px rgba(0, 0, 0, 0.5);
+  --sy-shadow-popover: 0 12px 32px rgba(0, 0, 0, 0.5);
+  --sy-shadow-tooltip: 0 8px 24px rgba(0, 0, 0, 0.4);
+  --sy-z-base: 0;
+  --sy-z-timelineClip: 1;
+  --sy-z-timelineOverlay: 2;
+  --sy-z-timelinePlayhead: 3;
+  --sy-z-sticky: 10;
+  --sy-z-drawer: 50;
+  --sy-z-popover: 100;
+  --sy-z-tooltip: 200;
+  --sy-z-toast: 300;
+  --sy-z-modalBackdrop: 390;
+  --sy-z-modal: 400;
+  --sy-z-splash: 1000;
+  --sy-radius: 0;
+  --sy-opacity-disabled: 0.45;
+}
+:root,
+[data-theme="dark"] {
+  --sy-bg: #201e1d;
+  --sy-backdrop: #1c1a19;
+  --sy-panel: #262423;
+  --sy-track-alt: #2a2827;
+  --sy-surface: #2d2b2b;
+  --sy-hover: #332f2f;
+  --sy-elevated: #383535;
+  --sy-border: #444141;
+  --sy-hatch: #4d4545;
+  --sy-divider: #605d5d;
+  --sy-text: #f3f2f2;
+  --sy-text-2: #bab6b6;
+  --sy-text-3: #9b9797;
+  --sy-disabled: #7d7979;
+  --sy-selected: #4d170e;
+  --sy-transcript-text: #d7d3d3;
+}
+[data-theme="light"] {
+  --sy-bg: #f3f2f2;
+  --sy-panel: #eae9e9;
+  --sy-surface: #f8f4f4;
+  --sy-elevated: #ffffff;
+  --sy-border: #d7d3d3;
+  --sy-divider: #9b9797;
+  --sy-text: #201e1d;
+  --sy-text-2: #605d5d;
+  --sy-text-3: #7d7979;
+  --sy-disabled: #bab6b6;
+  --sy-hover: #eae7e7;
+  --sy-selected: #ffe0d9;
+}
+[data-theme="light"] {
+  --sy-shadow-e1: 0 1px 2px rgba(45, 43, 43, 0.14);
+  --sy-shadow-e2: 0 3px 10px rgba(45, 43, 43, 0.16);
+  --sy-shadow-e3: 0 12px 32px rgba(45, 43, 43, 0.22);
+  --sy-success: #1f7a45;
+  --sy-warning: #8a5700;
+  --sy-error: #ae1800;
+}
+html {
+  font-family: var(--sy-font);
+  font-size: 13px;
+  background: var(--sy-bg);
+  color: var(--sy-text);
+}
+* {
+  border-radius: 0;
+}
+:focus-visible {
+  outline: 2px solid var(--sy-brand-primary);
+  outline-offset: 2px;
+}
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0ms !important;
+    transition-duration: 0ms !important;
+  }
+}

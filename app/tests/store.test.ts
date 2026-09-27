@@ -33,10 +33,14 @@ function installBridge(handlers: Partial<Record<Method, Handler>>): unknown[][] 
     chooseMedia: async () => [],
     chooseProjectToOpen: async () => null,
     chooseProjectToCreate: async () => null,
+    chooseFolder: async () => null,
+    chooseFile: async () => null,
+    saveReport: async () => null,
     chooseExportPath: async () => null,
     showInFolder: async () => {},
     pathForFile: () => "",
     readPeaks: async () => new Uint8Array(),
+    readThumbnail: async () => new Uint8Array(),
     platform: "test",
   };
   window.mcsync = bridge;

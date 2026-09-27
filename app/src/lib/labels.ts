@@ -23,6 +23,7 @@ export const FLAG_LABELS: Record<string, string> = {
   drift: "This device's clock runs at a different speed; alignment is best in the middle of the clip.",
   clock_mismatch: "The audio was found away from where the timecode said.",
   rejected_inconsistent: "An audio match contradicted the others and was ignored.",
+  redundant_uncertain: "An uncertain audio match between clips already placed by stronger evidence (not used).",
   conflicting_matches: "A confident audio match had to be ignored because it contradicts the others.",
   timecode_disagrees: "The clip's timecode disagrees with its audio; the audio was trusted.",
   detached_group: "Synced with some clips, but not connected to the reference recording.",

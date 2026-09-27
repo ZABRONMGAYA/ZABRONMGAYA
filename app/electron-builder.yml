@@ -1,9 +1,9 @@
 # Installers: Windows (NSIS, x64) and macOS (DMG, arm64 and x64), built by .github/workflows/release.yml.
 # The engine (PyInstaller, engine/packaging/build_engine.sh) and FFmpeg (engine/packaging/build_ffmpeg.sh) must be
-# built first, on the platform and architecture of the installer.
-appId: app.multicamsync.desktop
-productName: Multicam Sync
-copyright: Copyright © 2026 Multicam Sync contributors
+# built first, on the platform and architecture of the installer. Icons: node scripts/render-icons.mjs.
+appId: app.syncora.desktop
+productName: Syncora
+copyright: Copyright © 2026 Syncora contributors
 directories:
   output: release
   buildResources: build
@@ -20,11 +20,17 @@ extraResources:
 npmRebuild: false
 publish: null # no auto-update feed
 electronLanguages: [en-US, en-GB, de, fr, es, it, pt-BR, nl, ja, zh-CN]
+fileAssociations:
+  - ext: syncora
+    name: Syncora project
+    description: Syncora project
+    role: Editor
+    icon: syncora-doc
 
 mac:
   target: dmg
   category: public.app-category.video
-  icon: build/icon.png
+  icon: build/icon.icns
   # Signed with a Developer ID when CSC_LINK is set; otherwise the release workflow passes -c.mac.identity=-
   # (ad-hoc), which Apple Silicon needs to run the app at all.
   hardenedRuntime: true
@@ -33,16 +39,18 @@ mac:
   entitlementsInherit: build/entitlements.mac.plist
   minimumSystemVersion: "12.0"
 dmg:
-  artifactName: Multicam-Sync-${version}-macOS-${arch}.${ext}
+  artifactName: Syncora-${version}-macOS-${arch}.${ext}
+  title: Syncora ${version}
 
 win:
   target:
     - target: nsis
       arch: [x64]
-  icon: build/icon.png
+  icon: build/icon.ico
 nsis:
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
-  artifactName: Multicam-Sync-${version}-Windows-x64-Setup.${ext}
+  shortcutName: Syncora
+  artifactName: Syncora-Setup-${version}.${ext}
