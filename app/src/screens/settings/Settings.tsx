@@ -9,6 +9,7 @@ import { type SettingsCategory, useProd } from "../../state/production";
 import { useApp } from "../../state/store";
 import { formatBytes } from "../media/labels";
 
+// DESIGN-OPEN: #10 only the Synchronization pane is drawn; the other panes follow its layout (DESIGN_DECISIONS.md D-10).
 const CATEGORIES: { id: SettingsCategory | null; label: string }[] = [
   { id: "general", label: "General" },
   { id: null, label: "Appearance" },
@@ -377,6 +378,7 @@ function GeneralPane() {
   );
 }
 
+// DESIGN-OPEN: #12 About is drawn light in the Brand Kit; here it follows the app theme (DESIGN_DECISIONS.md D-10).
 function AboutPane() {
   const hello = useApp((s) => s.engine.hello);
   return (

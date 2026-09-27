@@ -14,6 +14,7 @@ Estimates assume one senior engineer; UI milestones parallelise well with a seco
 | M4 | Desktop shell and timeline UI | 4–6 weeks | ✅ done |
 | M5 | XML export and NLE validation | 2–3 weeks | ✅ export done; NLE imports to validate |
 | M6 | Hardening, packaging, beta | 3–4 weeks | in progress: installers built |
+| 1.1 | Syncora: large productions (phases 1–12) and the Syncora interface | | ✅ done, see below |
 
 ## M0: Architecture and specifications ✅
 
@@ -265,6 +266,30 @@ checks on real macOS 12+ and Windows 10/11 machines, the NLE import matrix (M5),
 * 95 % of clips in beta projects sync without manual intervention.
 * No confidently wrong placement reported.
 * Clean installs on macOS 13+ and Windows 10/11.
+
+## Syncora 1.1: large productions ✅
+
+The product is renamed Syncora and gets the interface from the Syncora design handoff
+([DESIGN_DECISIONS.md](../DESIGN_DECISIONS.md)). The scale work follows the twelve phases of the upgrade request, in
+order. Measurements are in [SCALABILITY_TEST_REPORT.md](../SCALABILITY_TEST_REPORT.md).
+
+| Phase | Delivered |
+|---|---|
+| 1 Limits audit | No count limits anywhere: imports, lists, queues, pair plans and exports take any number of files. The remaining bounds are per-worker memory (one file's audio) and the extended search's partner count. |
+| 2 Database | Schema v2 with migrations (`project/migrations.py`): media, analysis, sessions, tasks, duplicates, indexes for every browser query, batched writes in transactions. Benchmarked at 5k/10k media, 50k analysis and 100k transcript rows (`testing/dbbench.py`). |
+| 3 Ingestion pipeline | `pipeline/`: discovery → metadata → database → audio analysis (signal, waveform, landmarks) → candidates → verification → extended search → solve → results, in the background while the interface stays live. |
+| 4 Job queue | Tasks are rows of the project file with priorities and pending / processing / completed / failed / skipped / cancelled counts; pause, resume, cancel, retry failed, view errors, prioritise selection. |
+| 5 Workers and resources | `resources.py` detects processors, memory, disk and graphics (reported only). It recommends worker counts per stage; Settings → Performance has Auto / Manual. |
+| 6 Caching and resume | Analysis cached by content, so moved or renamed media is not analysed again. Quitting mid-analysis or mid-sync resumes on reopen (Resume / Restart dialog). |
+| 7 Candidate search | Clock overlaps + audio landmark index votes, verified in a narrow window; never all pairs beyond ~25 clips. |
+| 8 Sessions and groups | Sessions from the placement graph; cameras and groups assignable by hand; hand-made groups kept. |
+| 9 Fallback and solve | Extended audio search for unmatched clips, then manual; sparse vectorised solver; uncertain matches only bridge (ARCHITECTURE D12). No AI models ship: the "AI fallback" of the request is this extended audio search. |
+| 10 Interface at scale | Windowed grid and list, bins, search grammar, multi-select and bulk actions (sync, analyse, retry, cancel, prioritise, assign camera or group, remove from project), duplicates (keep both / ignore), offline and relink, project-wide progress with counts and no time estimates. |
+| 11 Stress and accuracy | 4,238-file production end to end; accuracy matrix of offsets × conditions; database benchmark. |
+| 12 Release | Syncora 1.1.0 installers (`Syncora-Setup-1.1.0.exe`, DMGs), tested in CI as installed apps, including uninstall and reinstall. |
+
+**Not in 1.1:** transcription, speaker and marker analysis, and AI (visual or speech) sync. The interface shows them as
+unavailable (DESIGN_DECISIONS.md D-08).
 
 ## After v1
 

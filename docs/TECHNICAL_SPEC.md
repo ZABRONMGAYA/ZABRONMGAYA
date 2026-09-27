@@ -1,6 +1,6 @@
 # Technical specification: version 1
 
-Audience: engineers building Multicam Sync. Architecture and rationale are in [ARCHITECTURE.md](ARCHITECTURE.md); the
+Audience: engineers building Syncora (formerly Multicam Sync). Architecture and rationale are in [ARCHITECTURE.md](ARCHITECTURE.md); the
 synchronisation algorithms in [SYNC_ENGINE.md](SYNC_ENGINE.md).
 
 ## 1. Users and core workflow
@@ -263,8 +263,11 @@ group is exported: by default group 0, the reference and everything synced to it
 
 ## 10. Persistence
 
-Project file `*.mcsync` = SQLite, `journal_mode=WAL`, `foreign_keys=ON`, migrations keyed by `PRAGMA user_version`.
-Implemented in M3; the schema is [`engine/src/mcsync/project/schema.sql`](../engine/src/mcsync/project/schema.sql).
+Project file `*.syncora` (`*.mcsync` from earlier versions opens and is migrated) = SQLite, `journal_mode=WAL`,
+`foreign_keys=ON`, migrations keyed by `PRAGMA user_version`. The schema is
+[`engine/src/mcsync/project/schema.sql`](../engine/src/mcsync/project/schema.sql); version 2 (Syncora 1.1,
+[`migrations.py`](../engine/src/mcsync/project/migrations.py)) adds the rows after `export`, with an index for
+every query the media browser and the task queue make, and writes in batched transactions.
 
 | Table | Holds |
 |---|---|
@@ -277,6 +280,14 @@ Implemented in M3; the schema is [`engine/src/mcsync/project/schema.sql`](../eng
 | `correction` | Append-only log (offset, clear_offset, reject/unreject pair, exclude/include) with `undone_at` for undo/redo |
 | `placement` | The latest solve, for opening a project instantly |
 | `export` | Exports and their reports (M5) |
+| `media_file` (v2 columns), `pair_match` (v2) | Filename, kind, duration, rate, size, codec, audio format, timecode, creation time (for the browser and search without parsing JSON); `duplicate_of`, `duplicate_reason` (identical / probable), `duplicate_decision` (keep / ignore); pair matches gain offset and method (fingerprint, fallback, full) |
+| `import_root`, `discovered` | What the user imported (for rescans and relinking), and every file found, before and after probing |
+| `media_probe` | Raw ffprobe output, for diagnostics |
+| `task` | The persistent work queue: kind (probe, analyze, match, extend), target (unique per kind), clip or pair, stage, priority (0 = most urgent), status (pending, processing, completed, failed, skipped, cancelled), attempts, error, run, timestamps |
+| `audio_analysis` | Per clip: cache key (signal, waveform and fingerprint files), rate, samples, level, fingerprint size, status |
+| `session` | Sessions with label, wall-clock span, the sync group they came from, and source (auto / manual); `clip.session_id` links clips |
+| `meta` | Pipeline state, including the phase of an unfinished sync run (for resume) |
+| `ai_analysis`, `transcript_segment`, `marker` | Reserved for analysis features that are not in 1.1; benchmarked at 50k and 100k rows |
 
 Pair keys give **incremental synchronisation** and **crash resume**. Adding a camera to a synced project matches only
 that camera's pairs. A run that was cancelled or killed restarts with everything it had already matched (tested by

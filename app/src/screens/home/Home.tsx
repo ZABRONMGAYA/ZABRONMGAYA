@@ -31,6 +31,8 @@ export function Home() {
           <SyncoraSymbol size={22} />
           <span>Syncora</span>
         </div>
+        {/* DESIGN-OPEN: #10 Projects/Presets/Learn pages are not drawn: Projects opens a project, the others are
+            disabled with a tooltip (DESIGN_DECISIONS.md D-03). */}
         <nav className="sy-home__nav" aria-label="Home">
           <button type="button" className="sy-navitem" aria-current="page">
             <House size={16} aria-hidden /> Home

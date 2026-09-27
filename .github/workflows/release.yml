@@ -1,8 +1,10 @@
 name: release
 
-# Builds the installers on each platform: Windows x64 (NSIS), macOS Apple Silicon and Intel (DMG).
-# Every build is tested before upload: the end-to-end suite runs against the packaged app, with its bundled
-# engine and FFmpeg. Tags (v*) and manual runs also collect the installers into a draft GitHub release.
+# Builds the Syncora installers on each platform: Windows x64 (NSIS), macOS Apple Silicon and Intel (DMG).
+# Every installer is tested before upload, the way a user gets the app: install it (silent NSIS install / copy
+# from the DMG to /Applications), run both end-to-end suites against the installed app with its bundled engine
+# and FFmpeg (the editor workflow, and a 260-file production), uninstall and check nothing is left behind, then
+# install again and launch. Tags (v*) and manual runs also collect the installers into a draft GitHub release.
 #
 # Optional signing (repository secrets): CSC_LINK + CSC_KEY_PASSWORD (a .p12 Developer ID or Windows code-signing
 # certificate, base64), and for macOS notarization APPLE_ID + APPLE_APP_SPECIFIC_PASSWORD + APPLE_TEAM_ID.
@@ -16,6 +18,7 @@ on:
       - ".github/workflows/release.yml"
       - "engine/packaging/**"
       - "app/electron-builder.yml"
+      - "app/scripts/installed-app.*"
   workflow_dispatch:
 
 concurrency:
@@ -40,7 +43,7 @@ jobs:
             os: macos-15-intel
             arch: x64
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 90
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -129,18 +132,47 @@ jobs:
             macOS) brew install ffmpeg ;;
             Windows) choco install ffmpeg -y --no-progress ;;
           esac
-      - name: End-to-end tests against the packaged app
+      - name: Install the app (Windows)
+        if: runner.os == 'Windows'
+        working-directory: app
+        shell: pwsh
+        run: ./scripts/installed-app.ps1 install
+      - name: Install the app (macOS)
+        if: runner.os == 'macOS'
+        working-directory: app
+        run: scripts/installed-app.sh install ${{ matrix.arch }}
+      - name: End-to-end tests against the installed app
         working-directory: app
         shell: bash
         env:
           MCSYNC_PYTHON: python
         run: |
-          case "${{ matrix.name }}" in
-            windows-x64) export MCSYNC_E2E_APP="$PWD/release/win-unpacked/Multicam Sync.exe" ;;
-            macos-arm64) export MCSYNC_E2E_APP="$PWD/release/mac-arm64/Multicam Sync.app/Contents/MacOS/Multicam Sync" ;;
-            macos-x64) export MCSYNC_E2E_APP="$PWD/release/mac/Multicam Sync.app/Contents/MacOS/Multicam Sync" ;;
-          esac
-          npx playwright test e2e/app.spec.ts
+          echo "Testing $MCSYNC_E2E_APP"
+          npx playwright test e2e/app.spec.ts e2e/production.spec.ts
+      - name: Uninstall (Windows)
+        if: runner.os == 'Windows'
+        working-directory: app
+        shell: pwsh
+        run: ./scripts/installed-app.ps1 uninstall
+      - name: Uninstall (macOS)
+        if: runner.os == 'macOS'
+        working-directory: app
+        run: scripts/installed-app.sh uninstall
+      - name: Reinstall (Windows)
+        if: runner.os == 'Windows'
+        working-directory: app
+        shell: pwsh
+        run: ./scripts/installed-app.ps1 install
+      - name: Reinstall (macOS)
+        if: runner.os == 'macOS'
+        working-directory: app
+        run: scripts/installed-app.sh install ${{ matrix.arch }}
+      - name: Launch the reinstalled app
+        working-directory: app
+        shell: bash
+        env:
+          MCSYNC_PYTHON: python
+        run: npx playwright test e2e/app.spec.ts -g "starts on the Syncora home screen"
       - if: failure()
         uses: actions/upload-artifact@v4
         with:
@@ -180,18 +212,19 @@ jobs:
           draft: true
           tag_name: ${{ steps.version.outputs.tag }}
           target_commitish: ${{ github.sha }}
-          name: Multicam Sync ${{ steps.version.outputs.version }} (${{ steps.version.outputs.tag }})
+          name: Syncora ${{ steps.version.outputs.version }} (${{ steps.version.outputs.tag }})
           files: installers/*
           body: |
-            Installers for Multicam Sync ${{ steps.version.outputs.version }}, built from ${{ github.sha }}.
+            Installers for Syncora ${{ steps.version.outputs.version }}, built from ${{ github.sha }}. Each one was
+            installed, tested end to end, uninstalled and installed again on its platform before upload.
 
             | Computer | File |
             |---|---|
-            | Windows 10/11 (64-bit) | `Multicam-Sync-${{ steps.version.outputs.version }}-Windows-x64-Setup.exe` |
-            | Mac with Apple Silicon (M1 and later) | `Multicam-Sync-${{ steps.version.outputs.version }}-macOS-arm64.dmg` |
-            | Mac with an Intel processor | `Multicam-Sync-${{ steps.version.outputs.version }}-macOS-x64.dmg` |
+            | Windows 10/11 (64-bit) | `Syncora-Setup-${{ steps.version.outputs.version }}.exe` |
+            | Mac with Apple Silicon (M1 and later) | `Syncora-${{ steps.version.outputs.version }}-macOS-arm64.dmg` |
+            | Mac with an Intel processor | `Syncora-${{ steps.version.outputs.version }}-macOS-x64.dmg` |
 
             These builds are not signed with a paid certificate, so the system asks before the first launch:
             * **Windows:** "Windows protected your PC" → **More info** → **Run anyway**.
-            * **macOS:** open the DMG and drag Multicam Sync to Applications. The first time it is blocked:
-              open **System Settings → Privacy & Security**, and click **Open Anyway** next to Multicam Sync.
+            * **macOS:** open the DMG and drag Syncora to Applications. The first time it is blocked:
+              open **System Settings → Privacy & Security**, and click **Open Anyway** next to Syncora.

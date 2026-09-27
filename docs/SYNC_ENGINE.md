@@ -117,7 +117,7 @@ verification = count(n_inliers) × (0.3 + 0.7 · smoothstep(inlier_fraction, 0.4
 detection    = smoothstep(coarse PSR, 5, 10)
 overlap      = smoothstep(overlap_s, 3 s, 10 s)
 confidence   = verification × (0.7 + 0.3·detection) × (0.8 + 0.2·overlap)
-               capped at 0.5 when ambiguous
+               capped at 0.5 when ambiguous, or when the verified windows correlate below 0.1 (weak_correlation)
 ```
 
 `confident` ≥ 0.7 > `uncertain` ≥ 0.35 > `no_match`.
@@ -131,10 +131,15 @@ match**. Findings from calibration:
   are `no_match` and 6 are `uncertain`, the worst scoring 0.46.
 * True matches in the test matrix score 1.0, except short overlaps. A 4 s clip scores 0.70 with `short_overlap`; a 6 s
   overlap scores 0.87.
+* At production scale (26,388 verified pairs in the 4,230-clip stress production) 17 confident matches were wrong.
+  They were music sessions, where beats line up across unrelated moments: every window agreed, but the
+  normalised correlation stayed at or below 0.14. Among the 22,294 correct confident matches, 99.9 % correlate at
+  0.157 or above. Hence the `weak_correlation` cap: a match whose windows agree but barely correlate is uncertain.
 
 Flags (stable identifiers the UI explains): `silent`, `silent_overlap`, `no_overlap`, `no_correlation`, `ambiguous`,
-`inconsistent_windows`, `unverified`, `short_overlap`, `drift`, `clock_mismatch`, and at placement level
-`rejected_inconsistent`, `user_rejected`, `below_threshold`, `conflicting_matches`, `timecode_disagrees`,
+`inconsistent_windows`, `unverified`, `short_overlap`, `drift`, `clock_mismatch`, `weak_correlation`, and at
+placement level `rejected_inconsistent`, `redundant_uncertain`, `uncertain_merge`, `user_rejected`, `below_threshold`,
+`conflicting_matches`, `timecode_disagrees`,
 `detached_group`, `manual`, `manual_conflict`, `excluded`, `no_audio`.
 
 ## 7. Global placement
@@ -166,7 +171,18 @@ rejections.
 4. **Outlier rejection:** reject the edge with the largest `|residual| / max(4σ, 5 ms)` above 1, re-solve, and repeat
    until everything is consistent. A wrong edge inside a cycle of correct ones stands out because the correct ones
    agree. Bridges (edges in no cycle) cannot be checked; they are accepted and the clip's confidence reflects the
-   single edge.
+   single edge. Components are independent, so each round rejects the worst edge of every component at once.
+
+Before solving, uncertain audio edges are reduced to bridges. Strong evidence (confident matches, precise clocks,
+manual offsets) forms groups first:
+
+* an uncertain edge inside a group is dropped (`redundant_uncertain`);
+* an uncertain edge may attach one device's clips to a group;
+* uncertain edges between two groups that each hold several devices are dropped (`uncertain_merge`). Joining whole
+  sessions needs a confident match.
+
+The solve runs on arrays: one sparse normal-equations system for all components (SciPy), with connected components
+from `scipy.sparse.csgraph`. At 4,230 clips and about 30,000 edges it takes under a second.
 
 ### 7.3 Clock domains
 
@@ -178,6 +194,11 @@ A clock domain is a set of clips whose start readings share a clock. Examples:
 A domain is a node with an unknown offset. This lets an **interrupted clip without usable audio** land correctly: its
 camera's clock places it relative to that camera's audio-synced clips, even when the camera clock is set 3 minutes
 wrong or to another time zone. Timecode crossing midnight is unwrapped per domain (a span over 12 h means next day).
+
+A device whose consecutive takes are contiguous to within two frames has rec-run timecode, which cannot place takes
+relative to each other, so its timecode is not used as a clock. Files that really are one recording split in several
+are not evidence of rec run: chapters of one take, files whose creation times also follow each other, and a sound
+recorder's Broadcast WAV files (sample-counted time references, split at a size or length limit).
 
 ### 7.4 Output
 
@@ -223,6 +244,23 @@ Timecode arithmetic lives in `mcsync.timecode`:
 * drop-frame for 29.97, 59.94 and 119.88, including rejection of labels that do not exist;
 * 24 h wrap;
 * BWF `time_reference`.
+
+### 8.1 Which pairs to compare
+
+Up to about 25 clips (300 cross-device pairs) every pair is compared. Beyond that, comparing every pair is out of
+reach (4,200 clips give 8.8 million pairs), while the pairs that really overlap grow only linearly. Pairs come from
+a funnel (`sync/candidates.py`):
+
+1. **Clocks:** pairs whose shared clock predicts an overlap, found by a sweep over time and verified in the
+   predicted window.
+2. **Landmarks:** spectrogram peak pairs hashed into one inverted index on disk (`sync/landmarks.py`). Each clip's
+   hashes vote for time differences against every other clip, and the strongest differences become candidates. The
+   full matcher verifies each one in a narrow window around the voted offset (`verify_pair`).
+3. **Extended search:** clips still without a confident match get a full-range search against a bounded number of
+   likely partners: the clips their votes pointed to, and the longest recordings nearest in recording time.
+4. **Manual:** whatever is left is reported for manual sync, never guessed.
+
+In the 4,230-clip stress production the funnel planned 26,388 pairs: 0.3 % of the 8.8 million possible pairs.
 
 ## 9. Measured accuracy and speed
 

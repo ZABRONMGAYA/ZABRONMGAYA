@@ -1,6 +1,6 @@
 # mcsync engine
 
-The Python side of Multicam Sync: audio/timecode synchronisation today; media probing and extraction, project
+The Python side of Syncora (formerly Multicam Sync): audio/timecode synchronisation today; media probing and extraction, project
 persistence, the JSON-RPC service and XML export in later milestones (see `../docs/MILESTONES.md`).
 
 ## Layout

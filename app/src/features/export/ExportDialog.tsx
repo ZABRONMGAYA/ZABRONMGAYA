@@ -10,6 +10,7 @@ const SETTINGS_KEY = "mcsync.exportOptions";
 const RATES = ["24000/1001", "24", "25", "30000/1001", "30", "50", "60000/1001", "60"];
 const TIMECODE = /^\d{2}:[0-5]\d:[0-5]\d[:;]\d{2}$/;
 
+// DESIGN-OPEN: #13 compatibility copy states only what the exporters' golden tests check (DESIGN_DECISIONS.md D-09).
 const FORMATS: { value: ExportFormat; title: string; detail: string }[] = [
   {
     value: "xmeml",

@@ -522,6 +522,7 @@ function MediaGrid({ rows, letters, sessions, threshold }: ViewProps) {
 
 const LIST_COLUMNS = "44px minmax(160px, 1.6fr) 44px 80px 70px 60px 110px minmax(150px, 1fr) 190px";
 
+// DESIGN-OPEN: #10 the list view is not drawn: it reuses the S08 results table rows (DESIGN_DECISIONS.md D-05).
 function MediaList({ rows, letters, sessions, threshold }: ViewProps) {
   const vp = useViewport();
   const selection = useProd((s) => s.selection);
