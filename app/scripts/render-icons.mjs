@@ -69,8 +69,17 @@ function ico(images) {
 }
 
 const ICNS_TYPES = [
-  ["icp4", 16], ["icp5", 32], ["icp6", 64], ["ic07", 128], ["ic08", 256], ["ic09", 512], ["ic10", 1024],
-  ["ic11", 32], ["ic12", 64], ["ic13", 256], ["ic14", 512],
+  ["icp4", 16],
+  ["icp5", 32],
+  ["icp6", 64],
+  ["ic07", 128],
+  ["ic08", 256],
+  ["ic09", 512],
+  ["ic10", 1024],
+  ["ic11", 32],
+  ["ic12", 64],
+  ["ic13", 256],
+  ["ic14", 512],
 ];
 
 async function icnsFrom(markupFor) {
@@ -89,7 +98,10 @@ const doc = svg("syncora-doc-icon.svg");
 const docFor = (size) => (size >= 64 ? doc : doc.replace(/<text[\s\S]*?<\/text>/, ""));
 
 writeFileSync(path.join(build, "icon.icns"), await icnsFrom(() => mac));
-writeFileSync(path.join(build, "icon.ico"), ico(await Promise.all([16, 32, 48, 256].map(async (s) => [s, await render(square, s)]))));
+writeFileSync(
+  path.join(build, "icon.ico"),
+  ico(await Promise.all([16, 32, 48, 256].map(async (s) => [s, await render(square, s)]))),
+);
 writeFileSync(path.join(build, "icon.png"), await render(square, 1024));
 writeFileSync(path.join(build, "syncora-doc.icns"), await icnsFrom(docFor));
 const docIco = [];

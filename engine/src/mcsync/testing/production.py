@@ -336,8 +336,8 @@ def evaluate(prod: Production, index: dict, *, tolerance_s: float = 0.02) -> dic
                 row = kept
         if f.expect != "sync":
             key = row["category"]
-            if f.expect in ("silent", "no-audio", "unrelated") and row["method"] == "audio":
-                key = "placed by audio (wrong)"
+            if f.expect in ("silent", "no-audio", "unrelated") and row["method"] == "audio" and key != "review":
+                key = "placed by audio (wrong)"  # a suggestion left for review is not a wrong sync
             bucket[key] = bucket.get(key, 0) + 1
             continue
         anchor = rows.get(anchors[f.session])

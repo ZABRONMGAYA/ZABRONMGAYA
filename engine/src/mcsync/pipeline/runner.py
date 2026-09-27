@@ -892,8 +892,8 @@ class Pipeline:
                     evidence.add(p.group)
         sessions = []
         for g, members in groups.items():
-            if g not in evidence:
-                continue  # placed by recording times alone: left unmatched for the editor
+            if g not in evidence or (g != 0 and len({r.device_id for r in members}) == 1):
+                continue  # recording times alone, or one device's own clock: left unmatched for the editor
             times = [r.info.creation_time for r in members if r.info.creation_time is not None]
             start = min(times) if times else None
             ends = [r.info.creation_time.timestamp() + r.info.duration_s for r in members if r.info.creation_time]

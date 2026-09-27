@@ -9,7 +9,7 @@ import type { MediaRow } from "../api/contract";
 type CompareOp = "<" | "<=" | ">" | ">=" | "=";
 
 export type Clause =
-  | { kind: "text"; text: string }
+  | { kind: "text"; text: string; words?: RegExp[] }
   | { kind: "time"; from: number; to: number }
   | { kind: "status"; status: StatusWord }
   | { kind: "compare"; field: "confidence" | "duration" | "fps" | "size"; op: CompareOp; value: number };
@@ -98,7 +98,12 @@ export function parseQuery(query: string): Clause[] {
   const words = rest.split(/\s+/);
   let text: string[] = [];
   const flush = () => {
-    if (text.length) clauses.push({ kind: "text", text: text.join(" ").toLowerCase() });
+    if (text.length) {
+      const phrase = text.join(" ").toLowerCase();
+      clauses.push(
+        text.length > 1 ? { kind: "text", text: phrase, words: text.map(wordPattern) } : { kind: "text", text: phrase },
+      );
+    }
     text = [];
   };
   for (const word of words) {
@@ -117,6 +122,13 @@ export function parseQuery(query: string): Clause[] {
   }
   flush();
   return clauses;
+}
+
+/** A word of a multi-word search: found at the start of a word; single letters only as whole words (so
+ * "Camera A" does not match every name containing an "a"). */
+function wordPattern(word: string): RegExp {
+  const escaped = word.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(word.length === 1 ? `(^|[^a-z0-9])${escaped}($|[^a-z0-9])` : `(^|[^a-z0-9])${escaped}`);
 }
 
 function minutesOfDay(iso: string | null): number | null {
@@ -180,7 +192,8 @@ export function matches(row: MediaRow, clauses: Clause[]): boolean {
   for (const c of clauses) {
     if (c.kind === "text") {
       const hay = `${row.name} ${row.device_name ?? ""} ${row.path} ${row.codec ?? ""}`.toLowerCase();
-      if (!hay.includes(c.text)) return false;
+      // The words as a phrase ("Camera A"), or each word somewhere ("S01_CAMD C0030").
+      if (!hay.includes(c.text) && !(c.words && c.words.every((w) => w.test(hay)))) return false;
     } else if (c.kind === "time") {
       const m = minutesOfDay(row.creation_time);
       if (m === null) return false;

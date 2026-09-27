@@ -60,7 +60,8 @@ def test_staged_pipeline_synchronises_a_multi_session_production(service, produc
     counts = summary["counts"]
     assert counts["failed"] == 5 and summary["unreadable_files"] == 5  # the damaged files
     assert counts["skipped"] == 5  # one of each pair of identical copies
-    assert counts["review"] >= 25  # muted, silent and unrelated clips: placed by recording time only
+    # Muted, drone and unrelated clips: only their own camera's clock places them, so they need manual sync.
+    assert counts["manual"] + counts["review"] >= 25 and counts["manual"] >= 20
     assert counts["synchronized"] >= SMALL.video_files + SMALL.audio_files - 2  # a backup folder mixes two cameras
     assert sum(counts[c] for c in counts if c != "synchronized") == summary["clips"] + 5
     assert len(summary["sessions"]) == SMALL.sessions

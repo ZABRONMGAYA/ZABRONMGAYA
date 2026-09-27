@@ -40,6 +40,8 @@ class Flag(StrEnum):
     NO_OVERLAP = "no_overlap"
     NO_CORRELATION = "no_correlation"
     AMBIGUOUS = "ambiguous"
+    #: The windows agree in time but the audio barely correlates (a shared beat, not the same sound).
+    WEAK_CORRELATION = "weak_correlation"
     INCONSISTENT_WINDOWS = "inconsistent_windows"
     UNVERIFIED = "unverified"
     SHORT_OVERLAP = "short_overlap"
@@ -49,6 +51,9 @@ class Flag(StrEnum):
     REJECTED_INCONSISTENT = "rejected_inconsistent"
     #: An uncertain match between clips that stronger evidence already places (not used).
     REDUNDANT_UNCERTAIN = "redundant_uncertain"
+    #: An uncertain match that would have joined two groups of several cameras each (not used: that needs a
+    #: confident match).
+    UNCERTAIN_MERGE = "uncertain_merge"
     USER_REJECTED = "user_rejected"
     BELOW_THRESHOLD = "below_threshold"
     CONFLICTING_MATCHES = "conflicting_matches"

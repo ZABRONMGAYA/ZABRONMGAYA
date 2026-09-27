@@ -64,10 +64,11 @@ from .jobs import Job, JobCancelled, JobManager
 from .rpc import APP_ERROR, BUSY, FFMPEG_MISSING, NO_PROJECT, JsonRpcServer, RpcError
 
 PROTOCOL_VERSION = 2
-#: Keys of clock-window and full-search matches (unchanged since release 0.1, so older projects keep their matches).
-MATCH_KEY_VERSION = "2"
+#: Keys of clock-window and full-search matches. 3: matches that barely correlate are no longer confident, so pairs
+#: stored by earlier versions are verified again.
+MATCH_KEY_VERSION = "3"
 #: Keys of fingerprint-candidate and extended-search matches: independent of the exact window.
-STAGED_KEY_VERSION = "3"
+STAGED_KEY_VERSION = "4"
 SETTINGS_DEFAULTS: dict[str, Any] = {
     "mode": SyncMode.HYBRID.value,
     "reference_clip_id": None,
@@ -419,13 +420,19 @@ class EngineService:
         placements = project.placements()
         threshold = float(self._settings()["review_threshold"])
         excluded = {int(c) for c in project.corrections().excluded_clips}
+        devices_in_group: dict[int, set] = defaultdict(set)
+        for r in rows:
+            p = placements.get(r["clip_id"])
+            if p is not None and p.group is not None:
+                devices_in_group[p.group].add(r["device_id"])
         out_rows = []
         for r in rows:
             cid = r["clip_id"]
             p = placements.get(cid)
             t = tasks.get(cid, {})
             a = analysis.get(cid)
-            category = _category(r, p, a, t, cid in excluded, threshold)
+            lone = p is not None and p.group not in (None, 0) and len(devices_in_group[p.group]) == 1
+            category = _category(r, p, a, t, cid in excluded, threshold, lone)
             out_rows.append([
                 cid, r["name"], r["kind"], r["device_id"], r["device_name"], r["device_kind"], r["session_id"],
                 r["duration_s"], r["fps"], r["width"], r["height"], r["codec"], r["sample_rate"], r["channels"],
@@ -1027,8 +1034,17 @@ def _plan_for(workers: int, recommended: WorkerPlan) -> WorkerPlan:
                       reason=f"{workers} matcher worker(s) requested")  # fmt: skip
 
 
-def _category(row: dict, placement, analysis: dict | None, tasks: dict, excluded: bool, threshold: float) -> str:  # noqa: ANN001
-    """Where a clip stands in the mass-sync results (``sync.summary``)."""
+def _category(
+    row: dict,
+    placement,  # noqa: ANN001
+    analysis: dict | None,
+    tasks: dict,
+    excluded: bool,
+    threshold: float,
+    lone_device: bool = False,
+) -> str:
+    """Where a clip stands in the mass-sync results (``sync.summary``). ``lone_device``: the clip's sync group holds
+    one device's clips only, placed by that device's own clock: not synchronised to anything else."""
     if excluded or (row["duplicate_of"] is not None and row["duplicate_decision"] != "keep"):
         return "skipped"
     if tasks.get("probe") == "failed" or (analysis is not None and analysis["status"] == "failed"):
@@ -1040,6 +1056,8 @@ def _category(row: dict, placement, analysis: dict | None, tasks: dict, excluded
     if placement.status == PlacementStatus.UNSYNCED:
         return "skipped" if placement.method == PlacementMethod.NONE and "excluded" in {
             f.value for f in placement.flags} else "manual"  # fmt: skip
+    if lone_device and placement.method not in (PlacementMethod.MANUAL, PlacementMethod.AUDIO):
+        return "manual"
     if placement.method in (PlacementMethod.REFERENCE, PlacementMethod.MANUAL):
         return "high_confidence" if placement.method == PlacementMethod.REFERENCE else "synchronized"
     if placement.status == PlacementStatus.NEEDS_REVIEW or placement.confidence < threshold:

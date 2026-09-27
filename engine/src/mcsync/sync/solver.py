@@ -57,6 +57,7 @@ from dataclasses import dataclass
 
 import numpy as np
 from scipy import sparse
+from scipy.sparse.csgraph import connected_components
 from scipy.sparse.linalg import spsolve
 
 from .params import DEFAULT_SOLVER_PARAMS, SolverParams
@@ -263,7 +264,7 @@ def solve_placements(
             )
 
     if params.uncertain_edges_bridge_only:
-        _drop_redundant_uncertain(edges, corrections, index, n_nodes, params)
+        _drop_redundant_uncertain(edges, corrections, index, n_nodes, [c.device_id for c in clips], params)
 
     def anchor_for(nodes: list[int]) -> int:
         if ref_node in nodes:
@@ -273,50 +274,39 @@ def solve_placements(
 
     # --- solve with iterative outlier rejection ------------------------------
     # Components are independent, so each iteration rejects the worst edge of every component at once: the same
-    # result as rejecting one edge per iteration, in far fewer solves for productions with many sync groups.
+    # result as rejecting one edge per iteration, in far fewer solves for productions with many sync groups. The
+    # loop works on arrays (one sparse solve for all components) so a 4,000-clip production solves in seconds.
     manual_ok: list[bool] = []
-    edge_i = np.array([e.i for e in edges], dtype=np.int64)
-    edge_j = np.array([e.j for e in edges], dtype=np.int64)
-    edge_off = np.array([e.offset_s for e in edges])
-    edge_time = np.array([e.time_s for e in edges])
-    edge_audio = np.array([e.kind == EdgeKind.AUDIO for e in edges], dtype=bool)
-    edge_scale = np.array([max(params.outlier_sigma * e.sigma_s, params.outlier_min_s) for e in edges])
+    ea = _EdgeArrays(edges, params)
     # Equally inconsistent edges: reject the one touching a clip the user placed by hand (its audio is what the
     # user overrode).
     moved = {index[mo.clip_id] for mo in corrections.offsets}
     edge_moved = np.array([e.i in moved or e.j in moved for e in edges], dtype=bool)
+    residuals = np.zeros(len(edges))
     while True:
-        rates = _solve_rates(edges, n_nodes, anchor_for)
+        rates = _solve_rates(ea, n_nodes, anchor_for)
         uf, manual_ok = _manual_constraints(corrections, index, rates, durations, n_nodes, params)
-        positions, component = _solve_starts(uf, edges, rates, n_nodes, anchor_for)
+        root_of, off_of = _flatten(uf, n_nodes)
+        targets = ea.targets(rates)
+        positions, component, comp_of_root = _solve_starts(ea, targets, root_of, off_of, n_nodes, uf, anchor_for)
         if not edges:
             break
-        found = [uf.find(k) for k in range(n_nodes)]
-        root_of = np.array([r for r, _ in found], dtype=np.int64)
-        node_pos = positions[root_of] + np.array([o for _, o in found])
-        targets = np.where(
-            edge_audio,
-            edge_off + rates[edge_i] * (edge_time + edge_off) - rates[edge_j] * edge_time,
-            edge_off,
-        )
-        residuals = node_pos[edge_j] - node_pos[edge_i] - targets
-        active = np.array([e.active for e in edges], dtype=bool)
-        scores = np.where(active, np.abs(residuals) / edge_scale, 0.0)
-        comp_of_edge = np.array([component[r] for r in root_of[edge_i]], dtype=np.int64)
-        rank = np.round(scores, 6)
-        worst_by_comp: dict[int, int] = {}
-        for k in np.flatnonzero(scores > 1.0):
-            c = int(comp_of_edge[k])
-            w = worst_by_comp.get(c)
-            if w is None or (rank[k], edge_moved[k]) > (rank[w], edge_moved[w]):
-                worst_by_comp[c] = int(k)
-        for k, e in enumerate(edges):
-            e.residual_s = float(residuals[k])
-        if not worst_by_comp:
+        node_pos = positions[root_of] + off_of
+        residuals = node_pos[ea.j] - node_pos[ea.i] - targets
+        scores = np.where(ea.active, np.abs(residuals) / ea.scale, 0.0)
+        bad = np.flatnonzero(scores > 1.0)
+        if len(bad) == 0:
             break
-        for k in worst_by_comp.values():
-            edges[k].active = False
-            edges[k].reason = Flag.REJECTED_INCONSISTENT
+        # The worst edge of every component (ties: the one touching a clip placed by hand).
+        comp = comp_of_root[root_of[ea.i[bad]]]
+        order = np.lexsort((edge_moved[bad], np.round(scores[bad], 6), comp))
+        last_of_comp = np.r_[comp[order][1:] != comp[order][:-1], True]
+        ea.active[bad[order[last_of_comp]]] = False
+    for k, e in enumerate(edges):
+        e.residual_s = float(residuals[k])
+        if e.active and not ea.active[k]:
+            e.active = False
+            e.reason = Flag.REJECTED_INCONSISTENT
 
     warnings = [
         f"manual offset of {mo.clip_id!r} relative to {mo.anchor_clip_id!r} contradicts "
@@ -465,9 +455,17 @@ def _drop_redundant_uncertain(
     corrections: ManualCorrections,
     index: dict[str, int],
     n_nodes: int,
+    devices: list[str | None],
     params: SolverParams,
 ) -> None:
-    """Deactivate uncertain audio edges inside groups that stronger evidence already connects."""
+    """Keep uncertain audio edges only where they attach something that stronger evidence leaves unconnected.
+
+    Inside a group that confident matches, precise clocks or manual offsets already connect, an uncertain edge is
+    redundant. Between groups, an uncertain match may attach the clips of one device (a camera whose audio is poor)
+    to a group, but not merge two groups that each hold several devices: joining whole sessions on uncertain
+    evidence is how unrelated sessions end up on one timeline. Links between groups are taken strongest first, and
+    a group that one link has grown counts as its merged self for the next.
+    """
     parent = list(range(n_nodes))
 
     def find(i: int) -> int:
@@ -486,21 +484,63 @@ def _drop_redundant_uncertain(
             parent[find(e.i)] = find(e.j)
     for mo in corrections.offsets:
         parent[find(index[mo.clip_id])] = find(index[mo.anchor_clip_id])
+
+    # Devices per group (clip nodes only; a clip without a device counts as its own).
+    kinds: dict[int, set[str]] = defaultdict(set)
+    for k, dev in enumerate(devices):
+        kinds[find(k)].add(dev if dev is not None else f"clip:{k}")
+    links: dict[tuple[int, int], list[_Edge]] = defaultdict(list)
     for e in edges:
-        if e.kind == EdgeKind.AUDIO and not strong(e) and find(e.i) == find(e.j):
+        if e.kind != EdgeKind.AUDIO or strong(e):
+            continue
+        a, b = find(e.i), find(e.j)
+        if a == b:
             e.active = False
             e.reason = Flag.REDUNDANT_UNCERTAIN
+        else:
+            links[(min(a, b), max(a, b))].append(e)
+    for (a, b), group in sorted(links.items(), key=lambda kv: -sum(e.confidence for e in kv[1])):
+        ra, rb = find(a), find(b)
+        if ra == rb:
+            continue  # joined through another link: these edges still vote on the placement
+        if len(kinds[ra]) > 1 and len(kinds[rb]) > 1:
+            for e in group:
+                e.active = False
+                e.reason = Flag.UNCERTAIN_MERGE
+            continue
+        parent[ra] = rb
+        kinds[rb] |= kinds.pop(ra)
 
 
-def _solve_rates(edges: list[_Edge], n_nodes: int, anchor_for: Callable[[list[int]], int]) -> np.ndarray:
+class _EdgeArrays:
+    """The numeric side of the edges, as arrays, for the solve loop."""
+
+    def __init__(self, edges: list[_Edge], params: SolverParams) -> None:
+        self.i = np.array([e.i for e in edges], dtype=np.int64)
+        self.j = np.array([e.j for e in edges], dtype=np.int64)
+        self.offset = np.array([e.offset_s for e in edges], dtype=np.float64)
+        self.time = np.array([e.time_s for e in edges], dtype=np.float64)
+        self.audio = np.array([e.kind == EdgeKind.AUDIO for e in edges], dtype=bool)
+        self.sigma = np.array([e.sigma_s for e in edges], dtype=np.float64)
+        self.rate = np.array([e.rate for e in edges], dtype=np.float64)
+        self.rate_sigma = np.array([e.rate_sigma for e in edges], dtype=np.float64)
+        self.scale = np.maximum(params.outlier_sigma * self.sigma, params.outlier_min_s)
+        self.active = np.array([e.active for e in edges], dtype=bool)
+
+    def targets(self, rates: np.ndarray) -> np.ndarray:
+        """Right-hand side of ``x_j - x_i = target`` for every edge (see :meth:`_Edge.target`)."""
+        if len(self.i) == 0:
+            return np.zeros(0)
+        audio = self.offset + rates[self.i] * (self.time + self.offset) - rates[self.j] * self.time
+        return np.where(self.audio, audio, self.offset)
+
+
+def _solve_rates(ea: _EdgeArrays, n_nodes: int, anchor_for: Callable[[list[int]], int]) -> np.ndarray:
     """Clock rates relative to each component's anchor, from audio lag slopes."""
-    rows = [
-        (e.i, e.j, e.rate, 1.0 / e.rate_sigma)
-        for e in edges
-        if e.active and e.kind == EdgeKind.AUDIO and np.isfinite(e.rate_sigma) and e.rate_sigma > 0
-    ]
-    values, _ = _graph_lstsq(list(range(n_nodes)), rows, anchor_for)
-    return np.array([values[k] for k in range(n_nodes)])
+    with np.errstate(divide="ignore", invalid="ignore"):
+        m = ea.active & ea.audio & np.isfinite(ea.rate_sigma) & (ea.rate_sigma > 0)
+        values, _ = _graph_lstsq(n_nodes, ea.i[m], ea.j[m], ea.rate[m], 1.0 / ea.rate_sigma[m], anchor_for)
+    return values
 
 
 def _manual_constraints(
@@ -521,96 +561,77 @@ def _manual_constraints(
     return uf, ok
 
 
-def _solve_starts(
-    uf: _OffsetUnionFind,
-    edges: list[_Edge],
-    rates: np.ndarray,
-    n_nodes: int,
-    anchor_for: Callable[[list[int]], int],
-) -> tuple[np.ndarray, dict[int, int]]:
-    """Start positions of the union-find roots and the component of every root."""
-    roots = sorted({uf.find(k)[0] for k in range(n_nodes)})
-    rows = []
-    for e in edges:
-        if not e.active:
-            continue
-        ri, oi = uf.find(e.i)
-        rj, oj = uf.find(e.j)
-        if ri != rj:  # edges inside a manual group only have a residual
-            rows.append((ri, rj, e.target(rates) - oj + oi, 1.0 / e.sigma_s))
-
-    members_of: dict[int, list[int]] = defaultdict(list)
+def _flatten(uf: _OffsetUnionFind, n_nodes: int) -> tuple[np.ndarray, np.ndarray]:
+    """Root and offset from the root of every node (only manually merged nodes differ from themselves)."""
+    root_of = np.arange(n_nodes, dtype=np.int64)
+    off_of = np.zeros(n_nodes)
     for k in range(n_nodes):
-        members_of[uf.find(k)[0]].append(k)
+        if uf.parent[k] != k:
+            root_of[k], off_of[k] = uf.find(k)
+    return root_of, off_of
+
+
+def _solve_starts(
+    ea: _EdgeArrays,
+    targets: np.ndarray,
+    root_of: np.ndarray,
+    off_of: np.ndarray,
+    n_nodes: int,
+    uf: _OffsetUnionFind,
+    anchor_for: Callable[[list[int]], int],
+) -> tuple[np.ndarray, dict[int, int], np.ndarray]:
+    """Start positions of the union-find roots, the component of every root (as a dict and as an array)."""
+    ri, rj = root_of[ea.i], root_of[ea.j]
+    m = ea.active & (ri != rj)  # edges inside a manual group only have a residual
+    rhs = targets - off_of[ea.j] + off_of[ea.i]
+    order = np.argsort(root_of, kind="stable")
+    starts = np.searchsorted(root_of[order], np.arange(n_nodes + 1))
 
     def root_anchor(comp_roots: list[int]) -> int:
-        members = [k for r in comp_roots for k in members_of[r]]
+        members = [int(k) for r in comp_roots for k in order[starts[r] : starts[r + 1]]]
         return uf.find(anchor_for(members))[0]
 
-    values, component = _graph_lstsq(roots, rows, root_anchor)
-    positions = np.zeros(n_nodes)
-    for r, v in values.items():
-        positions[r] = v
-    return positions, component
+    positions, comp_of_node = _graph_lstsq(n_nodes, ri[m], rj[m], rhs[m], 1.0 / ea.sigma[m], root_anchor)
+    roots = np.unique(root_of)
+    return positions, {int(r): int(comp_of_node[r]) for r in roots}, comp_of_node
 
 
 def _graph_lstsq(
-    nodes: list[int],
-    rows: list[tuple[int, int, float, float]],
+    n_nodes: int,
+    i: np.ndarray,
+    j: np.ndarray,
+    rhs: np.ndarray,
+    w: np.ndarray,
     anchor_for: Callable[[list[int]], int],
-) -> tuple[dict[int, float], dict[int, int]]:
-    """Weighted least squares for ``v_j - v_i ≈ rhs`` (weight w) on a graph.
+) -> tuple[np.ndarray, np.ndarray]:
+    """Weighted least squares for ``v_j - v_i ≈ rhs`` (weight ``w``) on a graph of ``n_nodes`` nodes.
 
-    Each connected component is solved separately with its anchor fixed at 0.
-    Returns the value of every node and a component id (a member node) per node.
+    Every connected component is anchored (its anchor fixed at 0) and all of them are solved at once through the
+    normal equations: a weighted graph Laplacian with the anchors' rows and columns removed, sparse, symmetric and
+    positive definite (a dense least-squares matrix of 20,000 measurements × 4,000 clips would need 640 MB).
+    Returns every node's value and its component id (the smallest node of the component).
     """
-    adjacency: dict[int, set[int]] = {n: set() for n in nodes}
-    for i, j, _, _ in rows:
-        adjacency[i].add(j)
-        adjacency[j].add(i)
-    component: dict[int, int] = {}
-    for n in nodes:
-        if n in component:
-            continue
-        stack, component[n] = [n], n
-        while stack:
-            u = stack.pop()
-            for v in adjacency[u]:
-                if v not in component:
-                    component[v] = n
-                    stack.append(v)
-
-    members: dict[int, list[int]] = defaultdict(list)
-    for n in nodes:
-        members[component[n]].append(n)
-    comp_rows: dict[int, list[tuple[int, int, float, float]]] = defaultdict(list)
-    for row in rows:
-        comp_rows[component[row[0]]].append(row)
-
-    values = {n: 0.0 for n in nodes}
-    for comp, comp_nodes in members.items():
-        if len(comp_nodes) == 1:
-            continue
-        anchor = anchor_for(comp_nodes)
-        col = {n: c for c, n in enumerate(n for n in comp_nodes if n != anchor)}
-        x = _weighted_graph_solve(comp_rows[comp], col)
-        for n, c in col.items():
-            values[n] = float(x[c])
-    return values, component
-
-
-def _weighted_graph_solve(rows: list[tuple[int, int, float, float]], col: dict[int, int]) -> np.ndarray:
-    """Least squares for ``v_j - v_i ≈ rhs`` with weights ``w`` (anchor absent from ``col``: fixed at 0).
-
-    Solved through the normal equations, a weighted graph Laplacian with the anchor's row and column removed:
-    sparse, symmetric and positive definite for a connected component, so thousands of clips solve in
-    milliseconds (a dense least-squares matrix of 20,000 measurements × 4,000 clips would need 640 MB).
-    """
-    n = len(col)
-    ii = np.array([col.get(i, -1) for i, _, _, _ in rows], dtype=np.int64)
-    jj = np.array([col.get(j, -1) for _, j, _, _ in rows], dtype=np.int64)
-    rhs = np.array([r for _, _, r, _ in rows])
-    w2 = np.array([w for _, _, _, w in rows]) ** 2
+    graph = sparse.coo_matrix((np.ones(len(i)), (i, j)), shape=(n_nodes, n_nodes))
+    _, labels = connected_components(graph, directed=False)
+    order = np.argsort(labels, kind="stable")
+    bounds = np.r_[0, np.flatnonzero(np.diff(labels[order])) + 1, n_nodes]
+    comp_id = np.empty(n_nodes, dtype=np.int64)
+    is_anchor = np.zeros(n_nodes, dtype=bool)
+    for a, b in zip(bounds[:-1], bounds[1:], strict=True):
+        members = order[a:b]
+        comp_id[members] = members.min()
+        if b - a > 1:
+            is_anchor[anchor_for([int(k) for k in members])] = True
+    sizes = np.bincount(labels)
+    unknown = (sizes[labels] > 1) & ~is_anchor
+    col = np.full(n_nodes, -1, dtype=np.int64)
+    col[unknown] = np.arange(int(unknown.sum()))
+    values = np.zeros(n_nodes)
+    n = int(unknown.sum())
+    if n == 0 or len(i) == 0:
+        return values, comp_id
+    ii, jj = col[i], col[j]
+    w2 = np.asarray(w, dtype=np.float64) ** 2
     diag = np.zeros(n)
     b = np.zeros(n)
     np.add.at(diag, ii[ii >= 0], w2[ii >= 0])
@@ -618,15 +639,13 @@ def _weighted_graph_solve(rows: list[tuple[int, int, float, float]], col: dict[i
     np.add.at(b, jj[jj >= 0], (w2 * rhs)[jj >= 0])
     np.subtract.at(b, ii[ii >= 0], (w2 * rhs)[ii >= 0])
     both = (ii >= 0) & (jj >= 0)
-    off_r = np.r_[ii[both], jj[both]]
-    off_c = np.r_[jj[both], ii[both]]
-    off_v = -np.r_[w2[both], w2[both]]
-    laplacian = sparse.coo_matrix(
-        (np.r_[diag, off_v], (np.r_[np.arange(n), off_r], np.r_[np.arange(n), off_c])), shape=(n, n)
-    ).tocsc()
-    if n <= 64:
-        return np.linalg.solve(laplacian.toarray(), b)
-    return np.asarray(spsolve(laplacian, b))
+    rows = np.r_[np.arange(n), ii[both], jj[both]]
+    cols = np.r_[np.arange(n), jj[both], ii[both]]
+    vals = np.r_[diag, -w2[both], -w2[both]]
+    laplacian = sparse.coo_matrix((vals, (rows, cols)), shape=(n, n)).tocsc()
+    x = np.linalg.solve(laplacian.toarray(), b) if n <= 64 else np.asarray(spsolve(laplacian, b))
+    values[unknown] = x
+    return values, comp_id
 
 
 # ---------------------------------------------------------------------------

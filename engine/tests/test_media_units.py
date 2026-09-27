@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import os
 import struct
-from datetime import UTC, datetime
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from fractions import Fraction
 from pathlib import Path
 
@@ -280,8 +281,6 @@ def test_gopro_chapters_old_and_new_naming():
 
 def test_four_gigabyte_splits():
     t0 = datetime(2026, 6, 14, 10, 0, 0, tzinfo=UTC)
-    from datetime import timedelta
-
     big = 4 * 2**30 - 10_000
     infos = [
         info("/c/MVI_0001.MOV", duration=1100.0, created=t0, size=big),
@@ -302,6 +301,20 @@ def test_rec_run_timecode_detection():
     # Chapters of one take are contiguous by nature and prove nothing.
     assert not is_record_run(rec[:2], chapters=[[0, 1]])
     assert not is_record_run([info("/a/1.MP4", tc=3600.0)])
+    # So are files whose creation times also follow each other: one recording, split.
+    t0 = datetime(2026, 6, 14, 10, 0, 0, tzinfo=UTC)
+    split = [info("/a/1.MP4", duration=60, tc=3600.0, created=t0),
+             info("/a/2.MP4", duration=60, tc=3660.0, created=t0 + timedelta(seconds=60))]  # fmt: skip
+    assert not is_record_run(split)
+    paused = [split[0], replace(split[1], creation_time=t0 + timedelta(seconds=600))]
+    assert is_record_run(paused)
+    # A sound recorder's split Broadcast WAV files follow each other to the sample.
+    bwf = [
+        replace(info(f"/r/{k}.WAV", duration=300, audio_only=True),
+                timecode=TimecodeInfo(seconds=57600.0 + 300 * k, rate=None, drop_frame=False, source="bwf"))
+        for k in range(3)
+    ]  # fmt: skip
+    assert not is_record_run(bwf)
 
 
 # ---------------------------------------------------------------------------

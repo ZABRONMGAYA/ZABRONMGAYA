@@ -120,6 +120,26 @@ def test_uncertain_edge_places_clip_for_review():
     assert placement.confidence == 0.5
 
 
+def test_uncertain_match_attaches_one_camera_but_never_merges_two_groups():
+    # Two sessions, each a recorder R and camera C matched confidently, plus a camera W whose audio is poor.
+    clips = [clip("R1", device="r1"), clip("C1", device="c1"), clip("R2", device="r2"), clip("C2", device="c2"),
+             clip("W1", 20.0, device="w"), clip("W2", 20.0, device="w")]  # fmt: skip
+    matches = [
+        match("R1", "C1", 10.0),
+        match("R2", "C2", 30.0),
+        match("R1", "W1", 40.0, confidence=0.5),  # W joins session 1 on uncertain evidence: allowed
+        match("C1", "W2", 50.0, confidence=0.5),
+        match("C1", "C2", 5.0, confidence=0.55),  # would join the two sessions: needs a confident match
+    ]
+    result = solve_placements(clips, matches, reference_id="R1")
+    p = result.placements
+    assert p["W1"].start_s == pytest.approx(40.0) and p["W2"].start_s == pytest.approx(60.0)
+    assert p["W1"].status == PlacementStatus.NEEDS_REVIEW
+    assert p["C2"].group != p["R1"].group
+    merged = [e for e in result.edges if e.reason == Flag.UNCERTAIN_MERGE]
+    assert [(e.node_a, e.node_b) for e in merged] == [("C1", "C2")]
+
+
 def test_disconnected_clips_form_detached_groups():
     clips = [clip("R"), clip("A"), clip("X", 300.0), clip("Y"), clip("Z")]
     matches = [match("R", "A", 5.0), match("X", "Y", 12.0)]

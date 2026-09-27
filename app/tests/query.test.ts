@@ -40,7 +40,7 @@ function row(over: Partial<MediaRow>): MediaRow {
 
 describe("search grammar", () => {
   it("parses the examples from the brief", () => {
-    expect(parseQuery("Camera A")).toEqual([{ kind: "text", text: "camera a" }]);
+    expect(parseQuery("Camera A")).toMatchObject([{ kind: "text", text: "camera a" }]);
     expect(parseQuery("08:30 - 10:00")).toEqual([{ kind: "time", from: 510, to: 600 }]);
     expect(parseQuery("Unsynchronized")).toEqual([{ kind: "status", status: "unsynchronized" }]);
     expect(parseQuery("Confidence < 80%")).toEqual([{ kind: "compare", field: "confidence", op: "<", value: 0.8 }]);
@@ -48,7 +48,7 @@ describe("search grammar", () => {
 
   it("combines clauses and keeps text phrases between keywords", () => {
     const clauses = parseQuery("Camera A review 08:30-10:00 duration > 1 min");
-    expect(clauses).toContainEqual({ kind: "text", text: "camera a" });
+    expect(clauses.find((c) => c.kind === "text")).toMatchObject({ kind: "text", text: "camera a" });
     expect(clauses).toContainEqual({ kind: "status", status: "review" });
     expect(clauses).toContainEqual({ kind: "compare", field: "duration", op: ">", value: 60 });
     expect(parseQuery("not synced")).toEqual([{ kind: "status", status: "unsynchronized" }]);
@@ -58,6 +58,11 @@ describe("search grammar", () => {
     const a = row({});
     expect(matches(a, parseQuery("camera a"))).toBe(true);
     expect(matches(a, parseQuery("Camera B"))).toBe(false);
+    // Several words: the phrase, or every word in the name, camera or folder.
+    expect(matches(a, parseQuery("SHOOT A_0012"))).toBe(true);
+    expect(matches(a, parseQuery("SHOOT A_0013"))).toBe(false);
+    const other = row({ name: "C0001.MP4", device_name: "Camera (S00_CAMA)", path: "/Volumes/SHOOT/CAMA/C0001.MP4" });
+    expect(matches(other, parseQuery("Camera A"))).toBe(false);
     expect(matches(a, parseQuery("08:30 - 10:00"))).toBe(true);
     expect(matches(a, parseQuery("10:00 - 11:00"))).toBe(false);
     expect(matches(a, parseQuery("confidence < 80%"))).toBe(false);

@@ -174,6 +174,11 @@ def is_record_run(infos: Sequence[MediaInfo], chapters: Sequence[Sequence[int]] 
     the frame after take 1 ends) whatever the pause between them, so it cannot
     place clips relative to each other. Detected when every pair of consecutive
     takes (chapters of one take excluded) is contiguous to within two frames.
+
+    Contiguous files that really are one recording split in several are not
+    evidence: pairs whose creation times also follow each other, and sound
+    recorders' Broadcast WAV files without creation times (a recorder splits a
+    long take into files that follow each other to the sample).
     """
     same_take = {frozenset((a, b)) for group in chapters for a, b in zip(group, group[1:], strict=False)}
     timed = sorted(
@@ -185,6 +190,12 @@ def is_record_run(infos: Sequence[MediaInfo], chapters: Sequence[Sequence[int]] 
             continue
         ta, tb = infos[a].timecode, infos[b].timecode
         assert ta is not None and tb is not None
+        ca, cb = infos[a].creation_time, infos[b].creation_time
+        if ca is not None and cb is not None:
+            if abs((cb - ca).total_seconds() - infos[a].duration_s) <= 3.0:
+                continue  # the wall clock says so too: one recording
+        elif ta.source == "bwf" and tb.source == "bwf":
+            continue
         frame = float(1 / ta.rate) if ta.rate else 0.04
         pairs += 1
         if abs(tb.seconds - (ta.seconds + infos[a].duration_s)) <= 2 * frame:

@@ -22,7 +22,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .confidence import classify, match_confidence
+from .confidence import WEAK_CORRELATION, classify, match_confidence
 from .correlation import cross_correlation, find_top_peaks, parabolic_peak, pearson, robust_z
 from .params import DEFAULT_PARAMS, SyncParams
 from .signal import AnalysisSignal
@@ -140,6 +140,7 @@ def estimate_offset(
         overlap_s=fine.overlap_s,
         ambiguous=ambiguous,
         params=params,
+        correlation=fine.correlation if fine.n_inliers >= _MIN_VERIFIED_INLIERS else None,
     )
     drift_ppm = -fine.slope * 1e6 if fine.slope else 0.0
     drift_std_ppm = fine.slope_std * 1e6
@@ -147,6 +148,8 @@ def estimate_offset(
     flags: list[Flag] = []
     if ambiguous:
         flags.append(Flag.AMBIGUOUS)
+    if fine.n_inliers >= _MIN_VERIFIED_INLIERS and fine.correlation < WEAK_CORRELATION:
+        flags.append(Flag.WEAK_CORRELATION)
     if fine.n_valid < _MIN_VERIFIED_INLIERS:
         flags.append(Flag.UNVERIFIED)
     elif fine.inlier_fraction < 0.6:

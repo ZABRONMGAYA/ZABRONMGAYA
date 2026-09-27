@@ -1,8 +1,9 @@
 // The timeline: group tabs, zoom, the synchronised tracks, and the clips that could not be placed.
+import { Redo2, Undo2 } from "lucide-react";
 import { useEffect } from "react";
 
 import type { Session } from "../../api/contract";
-import { Select } from "../../design-system/components";
+import { Select, shortcut } from "../../design-system/components";
 import { formatDuration, formatTime, parseRate } from "../../lib/format";
 import { useProd } from "../../state/production";
 import { displayedGroup, findClip, useApp, usePick } from "../../state/store";
@@ -116,6 +117,22 @@ export function TimelinePanel() {
           />
         )}
         <div className="grow" />
+        <button
+          className="small"
+          onClick={() => void useApp.getState().undo()}
+          title={`Undo the last correction (${shortcut("⌘Z")})`}
+          aria-label="Undo"
+        >
+          <Undo2 size={14} aria-hidden /> Undo
+        </button>
+        <button
+          className="small"
+          onClick={() => void useApp.getState().redo()}
+          title={`Redo (${shortcut("⇧⌘Z")})`}
+          aria-label="Redo"
+        >
+          <Redo2 size={14} aria-hidden /> Redo
+        </button>
         {cursorS !== null && (
           <span className="muted" data-testid="cursor-time">
             Cursor {formatTime(cursorS)}
@@ -138,7 +155,7 @@ export function TimelinePanel() {
           <p className="muted">
             {media.clips.length < 2
               ? "Import at least two recordings of the same event."
-              : "Press Synchronise to line the recordings up on a timeline."}
+              : "Press Sync all to line the recordings up on a timeline."}
           </p>
         </div>
       )}

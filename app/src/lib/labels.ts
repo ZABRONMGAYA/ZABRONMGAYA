@@ -21,9 +21,12 @@ export const FLAG_LABELS: Record<string, string> = {
   unverified: "Too little audio to double-check the match.",
   short_overlap: "The overlap with other recordings is short.",
   drift: "This device's clock runs at a different speed; alignment is best in the middle of the clip.",
+  weak_correlation: "The audio lines up but barely correlates, like a shared beat rather than the same sound.",
   clock_mismatch: "The audio was found away from where the timecode said.",
   rejected_inconsistent: "An audio match contradicted the others and was ignored.",
   redundant_uncertain: "An uncertain audio match between clips already placed by stronger evidence (not used).",
+  uncertain_merge:
+    "An uncertain audio match between two groups of cameras (not used: joining groups needs a confident match).",
   conflicting_matches: "A confident audio match had to be ignored because it contradicts the others.",
   timecode_disagrees: "The clip's timecode disagrees with its audio; the audio was trusted.",
   detached_group: "Synced with some clips, but not connected to the reference recording.",

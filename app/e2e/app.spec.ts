@@ -1,5 +1,5 @@
-// The whole editor workflow in the real app: new project → import a card dump → synchronise → review →
-// drag a clip → undo → nudge and snap back to the audio → reopen the project.
+// The whole editor workflow in the real app: new project → import a card dump → synchronise → results → timeline →
+// drag a clip → undo → nudge and snap back to the audio → export → reopen the project.
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -73,7 +73,7 @@ async function startOf(name: string): Promise<number> {
 }
 
 test.beforeAll(() => {
-  work = fs.mkdtempSync(path.join(os.tmpdir(), "mcsync-e2e-"));
+  work = fs.mkdtempSync(path.join(os.tmpdir(), "syncora-e2e-"));
   shootDir = path.join(work, "Smith wedding");
   expected = JSON.parse(execFileSync(python, ["-c", GENERATE, shootDir], { encoding: "utf-8" })) as Record<
     string,
@@ -95,46 +95,73 @@ test.afterAll(async () => {
   fs.rmSync(work, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 });
 });
 
-test("starts on the welcome screen with the engine ready", async () => {
+test("starts on the Syncora home screen with the engine ready", async () => {
   await launch();
   await expect(page.getByTestId("welcome")).toBeVisible();
   await expect(page.getByTestId("new-project")).toBeEnabled();
   await expect(page.getByTestId("statusbar")).toContainText("FFmpeg");
+  await expect(page).toHaveTitle("Syncora");
   // A packaged app runs its own engine with its own FFmpeg (engine/packaging/build_ffmpeg.sh).
   if (packagedApp) await expect(page.getByTestId("statusbar")).toContainText(/FFmpeg n\d/);
-  await shot("01-welcome");
+  await shot("01-home");
 });
 
 test("creates a project and imports a folder of footage", async () => {
-  await answerDialogs({ save: path.join(work, "Smith.mcsync"), open: [shootDir] });
+  await answerDialogs({ save: path.join(work, "Smith.syncora"), open: [shootDir] });
   await page.getByTestId("new-project").click();
   await expect(page.getByTestId("toolbar")).toContainText("Smith");
+  await expect(page.getByTestId("import-panel")).toBeVisible(); // a new project opens on the import view
 
   await page.getByTestId("import-folder").click();
-  await expect(page.getByTestId("toast-success")).toContainText(`Imported ${Object.keys(expected).length} file(s)`);
+  const n = Object.keys(expected).length;
   for (const name of Object.keys(expected)) await expect(page.getByTestId(`bin-clip-${name}`)).toBeVisible();
+  await expect(page.getByTestId("media-summary")).toContainText(`${n} clips`);
+  // Metadata and audio analysis run in the background; the import view counts them (no time estimates).
+  await expect(page.getByTestId("import-progress")).toContainText(`metadata ${n} / ${n}`);
+  await expect(page.getByTestId("import-progress")).toContainText(`audio ${n - 1} / ${n - 1}`); // all but the drone
   await shot("02-imported");
 });
 
-test("synchronises every clip to its true position", async () => {
-  await page.getByTestId("jam-synced").check();
-  await page.getByTestId("sync").click();
-  await expect(page.getByTestId("sync-stats")).toContainText(`${Object.keys(expected).length} synced`, {
-    timeout: 180_000,
-  });
+test("finds clips with the search grammar and bins", async () => {
+  const search = page.getByTestId("media-search");
+  await search.fill("audio");
+  await expect(page.getByTestId("media-summary")).toContainText("1 clips");
+  await expect(page.getByTestId("bin-clip-230614_001.WAV")).toBeVisible();
+  await search.fill("A00");
+  await expect(page.getByTestId("media-summary")).toContainText("2 clips");
+  await search.fill("");
+  await page.getByRole("button", { name: "List" }).click();
+  await expect(page.getByTestId("media-list")).toBeVisible();
+  await page.getByRole("button", { name: "Grid" }).click();
+});
 
+test("synchronises every clip to its true position", async () => {
+  // Settings → Synchronization: the cameras' timecode was jam-synced on this shoot.
+  await page.getByTestId("open-settings").click();
+  await page.getByTestId("settings-synchronization").click();
+  await page.getByRole("switch", { name: "Timecode is jam-synced" }).click();
+  await expect(page.getByRole("switch", { name: "Timecode is jam-synced" })).toHaveAttribute("aria-checked", "true");
+  await page.getByRole("button", { name: "Close settings" }).click();
+
+  await page.getByTestId("sync").click();
+  await expect(page.getByTestId("sync-screen")).toBeVisible();
+  await expect(page.getByTestId("results")).toBeVisible({ timeout: 180_000 });
+  const n = Object.keys(expected).length;
+  await expect(page.getByTestId("sync-stats")).toContainText(`${n} synced`);
+  await shot("03-results");
+
+  await page.getByTestId("open-timeline").click();
   const origin = await startOf("230614_001.WAV");
   for (const [name, offset] of Object.entries(expected)) {
     const clip = page.getByTestId(`clip-${name}`);
     await expect(clip).toHaveAttribute("data-status", "synced");
     expect(Math.abs((await startOf(name)) - origin - offset), name).toBeLessThan(0.04);
   }
-  await expect(page.getByTestId("clip-230614_001.WAV")).toContainText("(reference)");
   // Waveforms are drawn from the engine's cache, for every clip with audio (all but the drone).
   await expect
     .poll(() => page.evaluate(() => window.mcsyncTimeline?.stats() ?? null))
-    .toEqual({ clips: Object.keys(expected).length, waveforms: Object.keys(expected).length - 1 });
-  await shot("03-synced");
+    .toEqual({ clips: n, waveforms: n - 1 });
+  await shot("04-timeline");
 });
 
 test("explains a clip in the inspector", async () => {
@@ -143,7 +170,6 @@ test("explains a clip in the inspector", async () => {
   await expect(inspector).toContainText("A002.MOV");
   await expect(page.getByTestId("inspector-status")).toHaveText("Synced");
   await expect(page.getByTestId("matches")).toContainText("230614_001.WAV");
-  await shot("04-inspector");
 });
 
 test("drags a clip by hand and undoes it", async () => {
@@ -178,7 +204,6 @@ test("nudges a clip off and snaps it back to the audio", async () => {
   await page.getByTestId("snap").click();
   await expect(page.getByTestId("toast-success").last()).toContainText("Snapped to the audio");
   await expect.poll(async () => Math.abs((await startOf("A002.MOV")) - before)).toBeLessThan(0.002);
-  await shot("06-snapped");
 });
 
 test("rejects a wrong match from the inspector and restores it", async () => {
@@ -198,7 +223,7 @@ test("exports the timeline for Premiere Pro and Resolve", async () => {
     await app.evaluate(({ dialog }, target) => {
       dialog.showSaveDialog = (async () => ({ canceled: false, filePath: target })) as typeof dialog.showSaveDialog;
     }, out);
-    await page.getByTestId("export").click();
+    await page.getByTestId("stage-export").click();
     await page.getByTestId(`format-${format}`).check();
     await page.getByTestId("rate").selectOption("25");
     await page.getByTestId("export-submit").click();
@@ -207,7 +232,7 @@ test("exports the timeline for Premiere Pro and Resolve", async () => {
     await expect(result).toContainText("25 fps");
     // The recorder starts the timeline here, so it is sample-accurate in both formats.
     await expect(page.getByTestId("export-accuracy")).toContainText("Recorder audio is placed to the sample");
-    if (format === "xmeml") await shot("07-exported");
+    if (format === "xmeml") await shot("06-exported");
     await result.getByRole("button", { name: "Done" }).click();
     await expect(page.getByTestId("export-dialog")).toBeHidden();
 
@@ -221,9 +246,11 @@ test("reopens the project with its timeline", async () => {
   const start = await startOf("A002.MOV");
   await app.close();
   await launch();
-  await expect(page.getByTestId("welcome")).toContainText("Smith.mcsync");
-  await page.getByRole("button", { name: "Smith.mcsync" }).click();
+  await expect(page.getByTestId("welcome")).toContainText("Smith");
+  await page.getByRole("button", { name: "Smith" }).click();
+  await expect(page.getByTestId("media-screen")).toBeVisible();
+  await page.getByTestId("stage-timeline").click();
   await expect(page.getByTestId("clip-A002.MOV")).toBeAttached();
   expect(await startOf("A002.MOV")).toBeCloseTo(start, 6);
-  await shot("08-reopened");
+  await shot("07-reopened");
 });
