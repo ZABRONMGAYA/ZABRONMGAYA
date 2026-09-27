@@ -11,7 +11,8 @@ export function StatusBar() {
   const selection = useProd((s) => s.selection.size);
 
   const ok = engine.state === "ready";
-  const ffmpeg = engine.hello?.ffmpeg;
+  // The engine reports FFmpeg's banner ("ffmpeg version n8.1.3 Copyright …"); show the version only.
+  const ffmpeg = engine.hello?.ffmpeg?.match(/ffmpeg version (\S+)/)?.[1] ?? engine.hello?.ffmpeg;
   let left: string;
   if (engine.state === "starting") left = "Starting engine…";
   else if (!ok) left = `Engine ${engine.state}${engine.error ? `: ${engine.error}` : ""}`;

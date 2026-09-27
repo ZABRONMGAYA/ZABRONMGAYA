@@ -3,7 +3,7 @@ name: release
 # Builds the Syncora installers on each platform: Windows x64 (NSIS), macOS Apple Silicon and Intel (DMG).
 # Every installer is tested before upload, the way a user gets the app: install it (silent NSIS install / copy
 # from the DMG to /Applications), run both end-to-end suites against the installed app with its bundled engine
-# and FFmpeg (the editor workflow, and a 260-file production), uninstall and check nothing is left behind, then
+# and FFmpeg (the editor workflow, and a 279-file production), uninstall and check nothing is left behind, then
 # install again and launch. Tags (v*) and manual runs also collect the installers into a draft GitHub release.
 #
 # Optional signing (repository secrets): CSC_LINK + CSC_KEY_PASSWORD (a .p12 Developer ID or Windows code-signing
