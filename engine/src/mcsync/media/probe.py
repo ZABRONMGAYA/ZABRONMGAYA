@@ -432,15 +432,35 @@ def epoch_seconds(dt: datetime) -> float:
     return dt.timestamp()
 
 
+_NOT_MEDIA = {
+    ".xml", ".thm", ".lrv", ".jpg", ".jpeg", ".png", ".txt", ".ini", ".db", ".bin", ".xmp", ".srt",
+    ".pdf", ".log", ".cpi", ".bdm", ".mpl", ".ppn", ".dat", ".json", ".mcsync", ".syncora", ".tmp",
+    ".heic", ".dng", ".cr2", ".cr3", ".nef", ".arw", ".gif", ".webp", ".tif", ".tiff", ".psd", ".zip",
+}  # fmt: skip
+VIDEO_EXTENSIONS = {
+    ".mov", ".mp4", ".m4v", ".mxf", ".mts", ".m2ts", ".avi", ".mkv", ".webm", ".mpg", ".mpeg", ".m2t",
+    ".ts", ".3gp", ".insv", ".lrf", ".r3d", ".braw", ".crm", ".dv", ".wmv", ".vob",
+}  # fmt: skip
+AUDIO_EXTENSIONS = {
+    ".wav", ".bwf", ".rf64", ".w64", ".aif", ".aiff", ".flac", ".mp3", ".m4a", ".aac", ".ogg", ".opus",
+    ".wma", ".caf",
+}  # fmt: skip
+
+
+def is_media_name(name: str) -> bool:
+    """Cheap filter on a file name before probing: skip sidecars, thumbnails, stills and hidden files."""
+    return not name.startswith(".") and Path(name).suffix.lower() not in _NOT_MEDIA
+
+
+def media_kind_guess(name: str) -> str | None:
+    """'video' or 'audio' from the extension alone (for discovery counts; probing decides)."""
+    ext = Path(name).suffix.lower()
+    return "video" if ext in VIDEO_EXTENSIONS else "audio" if ext in AUDIO_EXTENSIONS else None
+
+
 def is_media_candidate(path: Path) -> bool:
     """Cheap filter before probing: skip sidecars, thumbnails and hidden files."""
-    name = path.name
-    if name.startswith(".") or not path.is_file():
-        return False
-    return path.suffix.lower() not in {
-        ".xml", ".thm", ".lrv", ".jpg", ".jpeg", ".png", ".txt", ".ini", ".db", ".bin", ".xmp", ".srt",
-        ".pdf", ".log", ".cpi", ".bdm", ".mpl", ".ppn", ".dat", ".json", ".mcsync",
-    }  # fmt: skip
+    return is_media_name(path.name) and path.is_file()
 
 
 __all__ = [
@@ -451,6 +471,8 @@ __all__ = [
     "VideoStreamInfo",
     "epoch_seconds",
     "is_media_candidate",
+    "is_media_name",
+    "media_kind_guess",
     "parse_probe",
     "parse_rate",
     "probe",

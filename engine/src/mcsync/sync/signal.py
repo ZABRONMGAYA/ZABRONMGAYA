@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import threading
+from collections import OrderedDict
 from fractions import Fraction
 
 import numpy as np
@@ -11,40 +12,99 @@ from scipy import signal as sps
 from .features import log_energy_envelope
 from .params import DEFAULT_PARAMS, SyncParams
 
-_SHARED_MAPS: dict[tuple, tuple[np.ndarray, dict]] = {}
-_SHARED_MAPS_MAX = 256
+#: Memory maps of cache files, shared by every signal of this process and bounded: each open map holds a file
+#: descriptor, and a project with thousands of clips must never hold thousands of them.
+_SHARED_MAPS: OrderedDict[tuple, tuple[np.ndarray, dict]] = OrderedDict()
+_SHARED_MAPS_MAX = 64
+_MAPS_LOCK = threading.Lock()
 
 
-@dataclass(eq=False)
+def _shared_map(source: tuple) -> tuple[np.ndarray, dict]:
+    """The process-wide map of a cache file and its envelope cache (least recently used ones are closed)."""
+    with _MAPS_LOCK:
+        shared = _SHARED_MAPS.get(source)
+        if shared is not None:
+            _SHARED_MAPS.move_to_end(source)
+            return shared
+        filename, dtype, shape, offset = source
+        if shape[0] == 0:
+            samples: np.ndarray = np.zeros(0, dtype=np.float32)
+        else:
+            samples = np.memmap(filename, dtype=dtype, mode="r", shape=shape, offset=offset)
+        shared = (samples, {})
+        _SHARED_MAPS[source] = shared
+        while len(_SHARED_MAPS) > _SHARED_MAPS_MAX:
+            _SHARED_MAPS.popitem(last=False)
+        return shared
+
+
+def _source_of(samples: np.ndarray) -> tuple | None:
+    if isinstance(samples, np.memmap) and samples.filename is not None:
+        return (str(samples.filename), samples.dtype.str, samples.shape, samples.offset)
+    return None
+
+
 class AnalysisSignal:
     """Mono, band-limited, RMS-normalised float32 audio at the analysis rate.
 
-    ``samples`` may be a ``numpy.memmap`` of a cache file; nothing here
-    requires the whole signal to be resident until it is correlated.
+    Either holds its ``samples`` or names a cache file (``source``: path, dtype, shape, offset) that is mapped
+    only while the samples are in use, through a small process-wide pool of maps. Nothing here requires the whole
+    signal to be resident until it is correlated.
     """
 
-    samples: np.ndarray
-    rate: int
-    #: In-band RMS level before normalisation, in dBFS (-inf for digital silence).
-    level_dbfs: float
-    _envelopes: dict[tuple, np.ndarray] = field(default_factory=dict, repr=False)
+    def __init__(
+        self,
+        samples: np.ndarray | None,
+        rate: int,
+        level_dbfs: float,
+        *,
+        source: tuple | None = None,
+    ) -> None:
+        if samples is None and source is None:
+            raise ValueError("a signal needs samples or a source file")
+        self._samples = samples
+        self._source = source if samples is None else None
+        self._length = len(samples) if samples is not None else int(source[2][0])  # type: ignore[index]
+        self.rate = rate
+        #: In-band RMS level before normalisation, in dBFS (-inf for digital silence).
+        self.level_dbfs = level_dbfs
+        self._envelopes: dict[tuple, np.ndarray] = {}
+
+    def __repr__(self) -> str:
+        where = self._source[0] if self._source else "memory"
+        return f"AnalysisSignal({self._length} samples at {self.rate} Hz, {self.level_dbfs:.1f} dBFS, {where})"
+
+    @property
+    def samples(self) -> np.ndarray:
+        if self._samples is not None:
+            return self._samples
+        return _shared_map(self._source)[0]  # type: ignore[arg-type]
+
+    @property
+    def source(self) -> tuple | None:
+        """The cache file behind a lazily mapped signal."""
+        return self._source
+
+    @property
+    def n_samples(self) -> int:
+        return self._length
 
     @property
     def duration_s(self) -> float:
-        return len(self.samples) / self.rate
+        return self._length / self.rate
 
     def is_silent(self, params: SyncParams = DEFAULT_PARAMS) -> bool:
         return self.level_dbfs < params.silence_floor_dbfs
 
     def __getstate__(self) -> dict:
-        # A memory-mapped signal crosses to worker processes as its file path
-        # only: every worker maps the same cache file instead of receiving a copy.
-        samples = self.samples
+        # A file-backed signal crosses to worker processes as its file path only: every worker maps the same cache
+        # file instead of receiving a copy.
         state = {"rate": self.rate, "level_dbfs": self.level_dbfs}
-        if isinstance(samples, np.memmap) and samples.filename is not None:
-            state["memmap"] = (str(samples.filename), samples.dtype.str, samples.shape, samples.offset)
+        source = self._source or (_source_of(self._samples) if self._samples is not None else None)
+        if source is not None:
+            state["memmap"] = source
         else:
-            state["samples"] = np.asarray(samples)
+            state["samples"] = np.asarray(self._samples)
             state["envelopes"] = self._envelopes
         return state
 
@@ -52,34 +112,31 @@ class AnalysisSignal:
         self.rate = state["rate"]
         self.level_dbfs = state["level_dbfs"]
         if "memmap" in state:
-            # One mapping and one envelope cache per file per process, shared by
-            # every task that process runs.
-            key = state["memmap"]
-            shared = _SHARED_MAPS.get(key)
-            if shared is None:
-                filename, dtype, shape, offset = key
-                shared = (np.memmap(filename, dtype=dtype, mode="r", shape=shape, offset=offset), {})
-                if len(_SHARED_MAPS) >= _SHARED_MAPS_MAX:
-                    _SHARED_MAPS.pop(next(iter(_SHARED_MAPS)))
-                _SHARED_MAPS[key] = shared
-            self.samples, self._envelopes = shared
+            self._samples, self._source = None, state["memmap"]
+            self._length = int(self._source[2][0])  # type: ignore[index]
+            self._envelopes = {}
         else:
-            self.samples = state["samples"]
+            self._samples, self._source = state["samples"], None
+            self._length = len(self._samples)
             self._envelopes = state["envelopes"]
 
     def envelope(self, params: SyncParams = DEFAULT_PARAMS) -> np.ndarray:
-        """Coarse-stage feature, cached per parameter set."""
+        """Coarse-stage feature, cached per parameter set (per file for file-backed signals)."""
         key = (params.feature_rate, params.envelope_floor_db, params.envelope_detrend_s)
-        env = self._envelopes.get(key)
+        if self._source is not None:
+            samples, cache = _shared_map(self._source)
+        else:
+            samples, cache = self.samples, self._envelopes
+        env = cache.get(key)
         if env is None:
             env = log_energy_envelope(
-                self.samples,
+                samples,
                 self.rate,
                 feature_rate=params.feature_rate,
                 floor_db=params.envelope_floor_db,
                 detrend_s=params.envelope_detrend_s,
             )
-            self._envelopes[key] = env
+            cache[key] = env
         return env
 
 

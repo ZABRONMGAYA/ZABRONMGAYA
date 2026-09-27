@@ -25,8 +25,6 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-import numpy as np
-
 from mcsync.sync.params import DEFAULT_PARAMS, SyncParams
 from mcsync.sync.signal import AnalysisSignal
 
@@ -74,15 +72,12 @@ class CacheEntry:
         (self.directory / "last_used").write_text(str(time.time()))
 
     def load(self) -> AnalysisSignal:
-        """Memory-map the prepared signal."""
+        """The prepared signal, memory-mapped when it is used (see :class:`AnalysisSignal`)."""
         meta = self.meta()
         self.touch()
         level = float(meta["level_dbfs"]) if meta["level_dbfs"] is not None else float("-inf")
-        if meta["samples"] == 0:
-            samples = np.zeros(0, dtype=np.float32)
-        else:
-            samples = np.memmap(self.pcm_path, dtype="<f4", mode="r", shape=(int(meta["samples"]),))
-        return AnalysisSignal(samples=samples, rate=int(meta["rate"]), level_dbfs=level)
+        source = (str(self.pcm_path), "<f4", (int(meta["samples"]),), 0)
+        return AnalysisSignal(None, rate=int(meta["rate"]), level_dbfs=level, source=source)
 
     def size_bytes(self) -> int:
         return sum(p.stat().st_size for p in self.directory.iterdir() if p.is_file())

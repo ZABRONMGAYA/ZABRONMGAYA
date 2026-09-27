@@ -118,7 +118,24 @@ def test_memory_mapped_signals_cross_processes_as_file_references(tmp_path):
     assert len(blob) < 2000  # a path, not 1.9 MB of samples
     first, second = pickle.loads(blob), pickle.loads(blob)
     np.testing.assert_array_equal(first.samples, sig.samples)
-    assert first._envelopes is second._envelopes  # one envelope cache per file per process
+    assert first.envelope() is second.envelope()  # one envelope cache per file per process
     copied = pickle.loads(pickle.dumps(sig))  # in-memory signals travel by value
     np.testing.assert_array_equal(copied.samples, sig.samples)
     assert copied.level_dbfs == sig.level_dbfs
+
+
+def test_file_backed_signals_hold_few_open_files(tmp_path):
+    """Thousands of clips must not mean thousands of open memory maps (each holds a file descriptor)."""
+    from mcsync.sync import AnalysisSignal
+    from mcsync.sync.signal import _SHARED_MAPS, _SHARED_MAPS_MAX
+
+    signals = []
+    for k in range(3 * _SHARED_MAPS_MAX):
+        path = tmp_path / f"s{k}.f32"
+        np.full(800, k, dtype="<f4").tofile(path)
+        signals.append(AnalysisSignal(None, 8000, -20.0, source=(str(path), "<f4", (800,), 0)))
+    assert all(s.duration_s == 0.1 for s in signals)  # known without mapping anything
+    for k, s in enumerate(signals):
+        assert s.samples[0] == k
+    assert len(_SHARED_MAPS) <= _SHARED_MAPS_MAX
+    assert signals[0].samples[5] == 0  # mapped again on demand
