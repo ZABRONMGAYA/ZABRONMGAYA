@@ -56,6 +56,8 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 import numpy as np
+from scipy import sparse
+from scipy.sparse.linalg import spsolve
 
 from .params import DEFAULT_SOLVER_PARAMS, SolverParams
 from .types import (
@@ -267,23 +269,51 @@ def solve_placements(
         return max(clip_nodes, key=lambda k: (durations[k] if k < n_clips else -1.0, -k))
 
     # --- solve with iterative outlier rejection ------------------------------
+    # Components are independent, so each iteration rejects the worst edge of every component at once: the same
+    # result as rejecting one edge per iteration, in far fewer solves for productions with many sync groups.
     manual_ok: list[bool] = []
+    edge_i = np.array([e.i for e in edges], dtype=np.int64)
+    edge_j = np.array([e.j for e in edges], dtype=np.int64)
+    edge_off = np.array([e.offset_s for e in edges])
+    edge_time = np.array([e.time_s for e in edges])
+    edge_audio = np.array([e.kind == EdgeKind.AUDIO for e in edges], dtype=bool)
+    edge_scale = np.array([max(params.outlier_sigma * e.sigma_s, params.outlier_min_s) for e in edges])
+    # Equally inconsistent edges: reject the one touching a clip the user placed by hand (its audio is what the
+    # user overrode).
+    moved = {index[mo.clip_id] for mo in corrections.offsets}
+    edge_moved = np.array([e.i in moved or e.j in moved for e in edges], dtype=bool)
     while True:
         rates = _solve_rates(edges, n_nodes, anchor_for)
         uf, manual_ok = _manual_constraints(corrections, index, rates, durations, n_nodes, params)
         positions, component = _solve_starts(uf, edges, rates, n_nodes, anchor_for)
-        worst, worst_score = None, 1.0
-        for e in edges:
-            e.residual_s = _position(uf, positions, e.j) - _position(uf, positions, e.i) - e.target(rates)
-            if not e.active:
-                continue
-            score = abs(e.residual_s) / max(params.outlier_sigma * e.sigma_s, params.outlier_min_s)
-            if score > worst_score:
-                worst, worst_score = e, score
-        if worst is None:
+        if not edges:
             break
-        worst.active = False
-        worst.reason = Flag.REJECTED_INCONSISTENT
+        found = [uf.find(k) for k in range(n_nodes)]
+        root_of = np.array([r for r, _ in found], dtype=np.int64)
+        node_pos = positions[root_of] + np.array([o for _, o in found])
+        targets = np.where(
+            edge_audio,
+            edge_off + rates[edge_i] * (edge_time + edge_off) - rates[edge_j] * edge_time,
+            edge_off,
+        )
+        residuals = node_pos[edge_j] - node_pos[edge_i] - targets
+        active = np.array([e.active for e in edges], dtype=bool)
+        scores = np.where(active, np.abs(residuals) / edge_scale, 0.0)
+        comp_of_edge = np.array([component[r] for r in root_of[edge_i]], dtype=np.int64)
+        rank = np.round(scores, 6)
+        worst_by_comp: dict[int, int] = {}
+        for k in np.flatnonzero(scores > 1.0):
+            c = int(comp_of_edge[k])
+            w = worst_by_comp.get(c)
+            if w is None or (rank[k], edge_moved[k]) > (rank[w], edge_moved[w]):
+                worst_by_comp[c] = int(k)
+        for k, e in enumerate(edges):
+            e.residual_s = float(residuals[k])
+        if not worst_by_comp:
+            break
+        for k in worst_by_comp.values():
+            edges[k].active = False
+            edges[k].reason = Flag.REJECTED_INCONSISTENT
 
     warnings = [
         f"manual offset of {mo.clip_id!r} relative to {mo.anchor_clip_id!r} contradicts "
@@ -364,12 +394,15 @@ def solve_placements(
 
         group = group_of[comp]
         if group != 0:
+            # Another sync group (a separate recording session): placed within its group, not on the reference's
+            # timeline. Only worth a review when the solver is told groups should have been connected.
             flags.append(Flag.DETACHED_GROUP)
+        detached_review = group != 0 and params.detached_groups_need_review
         if method == PlacementMethod.MANUAL:
-            review = group != 0  # the user's placement is final
+            review = detached_review  # the user's placement is final
         else:
             review = (
-                group != 0
+                detached_review
                 or confidence < params.confident_threshold
                 or any(f in flags for f in (Flag.TIMECODE_DISAGREES, Flag.CONFLICTING_MATCHES))
             )
@@ -471,9 +504,12 @@ def _solve_starts(
         if ri != rj:  # edges inside a manual group only have a residual
             rows.append((ri, rj, e.target(rates) - oj + oi, 1.0 / e.sigma_s))
 
+    members_of: dict[int, list[int]] = defaultdict(list)
+    for k in range(n_nodes):
+        members_of[uf.find(k)[0]].append(k)
+
     def root_anchor(comp_roots: list[int]) -> int:
-        wanted = set(comp_roots)
-        members = [k for k in range(n_nodes) if uf.find(k)[0] in wanted]
+        members = [k for r in comp_roots for k in members_of[r]]
         return uf.find(anchor_for(members))[0]
 
     values, component = _graph_lstsq(roots, rows, root_anchor)
@@ -522,19 +558,40 @@ def _graph_lstsq(
             continue
         anchor = anchor_for(comp_nodes)
         col = {n: c for c, n in enumerate(n for n in comp_nodes if n != anchor)}
-        crow = comp_rows[comp]
-        a = np.zeros((len(crow), len(col)))
-        b = np.zeros(len(crow))
-        for k, (i, j, rhs, w) in enumerate(crow):
-            if j in col:
-                a[k, col[j]] += w
-            if i in col:
-                a[k, col[i]] -= w
-            b[k] = w * rhs
-        x, *_ = np.linalg.lstsq(a, b, rcond=None)
+        x = _weighted_graph_solve(comp_rows[comp], col)
         for n, c in col.items():
             values[n] = float(x[c])
     return values, component
+
+
+def _weighted_graph_solve(rows: list[tuple[int, int, float, float]], col: dict[int, int]) -> np.ndarray:
+    """Least squares for ``v_j - v_i ≈ rhs`` with weights ``w`` (anchor absent from ``col``: fixed at 0).
+
+    Solved through the normal equations, a weighted graph Laplacian with the anchor's row and column removed:
+    sparse, symmetric and positive definite for a connected component, so thousands of clips solve in
+    milliseconds (a dense least-squares matrix of 20,000 measurements × 4,000 clips would need 640 MB).
+    """
+    n = len(col)
+    ii = np.array([col.get(i, -1) for i, _, _, _ in rows], dtype=np.int64)
+    jj = np.array([col.get(j, -1) for _, j, _, _ in rows], dtype=np.int64)
+    rhs = np.array([r for _, _, r, _ in rows])
+    w2 = np.array([w for _, _, _, w in rows]) ** 2
+    diag = np.zeros(n)
+    b = np.zeros(n)
+    np.add.at(diag, ii[ii >= 0], w2[ii >= 0])
+    np.add.at(diag, jj[jj >= 0], w2[jj >= 0])
+    np.add.at(b, jj[jj >= 0], (w2 * rhs)[jj >= 0])
+    np.subtract.at(b, ii[ii >= 0], (w2 * rhs)[ii >= 0])
+    both = (ii >= 0) & (jj >= 0)
+    off_r = np.r_[ii[both], jj[both]]
+    off_c = np.r_[jj[both], ii[both]]
+    off_v = -np.r_[w2[both], w2[both]]
+    laplacian = sparse.coo_matrix(
+        (np.r_[diag, off_v], (np.r_[np.arange(n), off_r], np.r_[np.arange(n), off_c])), shape=(n, n)
+    ).tocsc()
+    if n <= 64:
+        return np.linalg.solve(laplacian.toarray(), b)
+    return np.asarray(spsolve(laplacian, b))
 
 
 # ---------------------------------------------------------------------------

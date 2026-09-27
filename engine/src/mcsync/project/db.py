@@ -14,6 +14,7 @@ import json
 import os
 import sqlite3
 import threading
+import uuid
 from collections import defaultdict
 from collections.abc import Iterable, Iterator, Sequence
 from contextlib import contextmanager
@@ -21,6 +22,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from importlib import resources
 from pathlib import Path, PurePath
+from typing import Any
 
 from mcsync import __version__
 from mcsync.media.devices import DeviceGuess
@@ -250,7 +252,16 @@ class Project:
             c.execute("UPDATE project SET settings_json = ?", (json.dumps(settings),))
         return settings
 
-    def meta_get(self, key: str, default: object = None) -> object:
+    @property
+    def index_id(self) -> str:
+        """A stable id for this project's derived files outside the project (its fingerprint index)."""
+        value = self.meta_get("index_id")
+        if not isinstance(value, str):
+            value = uuid.uuid4().hex
+            self.meta_set("index_id", value)
+        return value
+
+    def meta_get(self, key: str, default: Any = None) -> Any:
         rows = self._query("SELECT value FROM meta WHERE key = ?", (key,))
         return json.loads(rows[0]["value"]) if rows else default
 
@@ -311,11 +322,7 @@ class Project:
                 except ValueError:  # another drive on Windows
                     rel = None
                 existing = c.execute("SELECT id FROM media_file WHERE path = ?", (it.path,)).fetchone()
-                twin = c.execute(
-                    "SELECT id FROM media_file WHERE fingerprint = ? AND path != ? ORDER BY id LIMIT 1",
-                    (it.fingerprint, it.path),
-                ).fetchone()
-                duplicate_of = int(twin["id"]) if twin else None
+                duplicate_of, reason = self._find_twin(c, it, cols)
                 names = ", ".join(f"{k} = ?" for k in cols)
                 if existing:
                     media_id = int(existing["id"])
@@ -328,9 +335,10 @@ class Project:
                 else:
                     cur = c.execute(
                         f"INSERT INTO media_file (path, rel_path, size_bytes, mtime_ns, fingerprint, info_json, "
-                        f"added_at, duplicate_of, {', '.join(cols)}) VALUES ({', '.join('?' * (8 + len(cols)))})",
+                        f"added_at, duplicate_of, duplicate_reason, {', '.join(cols)}) "
+                        f"VALUES ({', '.join('?' * (9 + len(cols)))})",
                         (it.path, rel, it.info.size_bytes, it.info.mtime_ns, it.fingerprint, info_json, _now(),
-                         duplicate_of, *cols.values()),
+                         duplicate_of, reason, *cols.values()),
                     )  # fmt: skip
                     media_id = int(cur.lastrowid)  # type: ignore[arg-type]
                 if it.info.raw:
@@ -366,6 +374,25 @@ class Project:
                     ids.append(int(cur.lastrowid))  # type: ignore[arg-type]
         self._clips_changed()
         return ids
+
+    @staticmethod
+    def _find_twin(c: sqlite3.Connection, it: MediaItem, cols: dict) -> tuple[int | None, str | None]:
+        """Another file already in the project with the same content (identical), or with the same name, length and
+        recording time but other bytes (probable: a re-encoded or re-wrapped copy)."""
+        row = c.execute(
+            "SELECT id FROM media_file WHERE fingerprint = ? AND path != ? ORDER BY id LIMIT 1",
+            (it.fingerprint, it.path),
+        ).fetchone()
+        if row:
+            return int(row["id"]), "identical"
+        if cols["creation_time"] is None or cols["duration_s"] is None:
+            return None, None
+        row = c.execute(
+            "SELECT id FROM media_file WHERE filename = ? AND creation_time = ? AND ABS(duration_s - ?) < 0.05 "
+            "AND path != ? AND duplicate_of IS NULL ORDER BY id LIMIT 1",
+            (cols["filename"], cols["creation_time"], cols["duration_s"], it.path),
+        ).fetchone()
+        return (int(row["id"]), "probable") if row else (None, None)
 
     def set_chapters(self, rows: Iterable[tuple[int, str | None, int | None, float | None, int | None]]) -> None:
         """``(clip_id, take, index, offset_s, device_id)``: chapters found once a device's files are all in."""
@@ -487,7 +514,8 @@ class Project:
     def duplicates(self) -> list[dict]:
         rows = self._query(
             "SELECT copy.id AS media_id, copy.path, copy.filename, orig.id AS original_id, orig.path AS original_path, "
-            "orig.filename AS original_filename, copy.duplicate_decision AS decision, clip.id AS clip_id "
+            "orig.filename AS original_filename, copy.duplicate_decision AS decision, "
+            "copy.duplicate_reason AS reason, copy.size_bytes, copy.duration_s, clip.id AS clip_id "
             "FROM media_file copy JOIN media_file orig ON orig.id = copy.duplicate_of "
             "JOIN clip ON clip.media_id = copy.id ORDER BY copy.id"
         )
@@ -573,6 +601,21 @@ class Project:
                 [(status, media_id, error, i) for i, status, media_id, error in rows],
             )
 
+    def rediscover(self, rows: Sequence[tuple[str, int, int]]) -> list[tuple[int, str]]:
+        """Files that changed on disk ``(path, size, mtime_ns)``: back to pending; returns ``(id, path)``."""
+        now = _now()
+        out = []
+        with self._tx() as c:
+            for path, size, mtime in rows:
+                c.execute(
+                    "INSERT INTO discovered (path, size_bytes, mtime_ns, kind_guess, discovered_at) VALUES (?, ?, ?, "
+                    "NULL, ?) ON CONFLICT (path) DO UPDATE SET size_bytes = excluded.size_bytes, "
+                    "mtime_ns = excluded.mtime_ns, status = 'pending', error = NULL",
+                    (path, size, mtime, now),
+                )
+                out.append((int(c.execute("SELECT id FROM discovered WHERE path = ?", (path,)).fetchone()[0]), path))
+        return out
+
     def discovery_counts(self) -> dict:
         rows = self._query("SELECT kind_guess, status, COUNT(*) AS n FROM discovered GROUP BY kind_guess, status")
         by_kind: dict[str, int] = defaultdict(int)
@@ -641,14 +684,31 @@ class Project:
                 [(status, error, now, i) for i, status, error in results],
             )
 
+    def release_tasks(self, ids: Sequence[int]) -> None:
+        """Put running tasks back in the queue as if never started (interrupted by a pause)."""
+        with self._tx() as c:
+            c.executemany(
+                "UPDATE task SET status = 'pending', attempts = MAX(attempts - 1, 0) "
+                "WHERE id = ? AND status = 'running'",
+                [(i,) for i in ids],
+            )
+
     def reset_running_tasks(self) -> int:
         """After a crash or a pause, running tasks go back to the queue (their results were never written)."""
         with self._tx() as c:
             return c.execute("UPDATE task SET status = 'pending' WHERE status = 'running'").rowcount
 
-    def task_counts(self) -> dict[str, dict[str, int]]:
+    def task_counts(self, run_id: int | None = None) -> dict[str, dict[str, int]]:
+        """``{kind: {status: n}}``; with ``run_id``, match work of that sync run only (other kinds unaffected)."""
         out: dict[str, dict[str, int]] = defaultdict(lambda: dict.fromkeys(TASK_STATUSES, 0))
-        for r in self._query("SELECT kind, status, COUNT(*) AS n FROM task GROUP BY kind, status"):
+        if run_id is None:
+            rows = self._query("SELECT kind, status, COUNT(*) AS n FROM task GROUP BY kind, status")
+        else:
+            rows = self._query(
+                "SELECT kind, status, COUNT(*) AS n FROM task WHERE run_id IS NULL OR run_id = ? GROUP BY kind, status",
+                (run_id,),
+            )
+        for r in rows:
             out[r["kind"]][r["status"]] = r["n"]
         return dict(out)
 

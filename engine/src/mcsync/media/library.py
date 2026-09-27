@@ -32,6 +32,9 @@ from .fingerprint import fingerprint
 from .probe import AudioStreamInfo, MediaInfo, ProbeError, is_media_candidate, probe
 from .tools import FFmpegTools, find_tools
 
+#: Uncertainty of a Broadcast WAV time reference between files of one recorder (sample-counted: 0.1 ms).
+BWF_DEVICE_SIGMA_S = 1e-4
+
 
 @dataclass
 class MediaItem:
@@ -178,6 +181,9 @@ def build_clip_inputs(
             domain = f"tc:{tc.family}" if timecode_jam_synced else f"tc:{it.device.key}:{tc.family}"
             source = ClockSource.BWF if tc.source == "bwf" else ClockSource.TIMECODE
             sigma = float(1 / tc.rate) if tc.rate else None
+            if source == ClockSource.BWF and not timecode_jam_synced:
+                # A recorder's own sample count: its split files follow each other to the sample.
+                sigma = BWF_DEVICE_SIGMA_S
             clocks.append(ClockReading(tc.seconds, domain=domain, source=source, sigma_s=sigma))
         if use_creation_time and it.info.creation_time is not None:
             clocks.append(

@@ -92,14 +92,14 @@ def test_protocol_errors(svc):
         svc.call("project.open", path="/nowhere/at/all.mcsync")
     assert err.value.code == APP_ERROR
     hello = svc.call("engine.hello", client="tests")
-    assert hello["protocol"] == 1 and hello["version"]
+    assert hello["protocol"] == 2 and hello["version"]
 
 
 def test_busy_and_cancelled_jobs(svc, tmp_path):
     svc.call("project.create", path=str(tmp_path / "p.mcsync"))
     job = svc.service.jobs.start("sync", lambda j: j.cancel.wait(30) and j.check_cancelled())
     with pytest.raises(RpcFailure) as err:
-        svc.call("media.import", paths=[str(tmp_path)])
+        svc.call("media.remove", clip_ids=[1])
     assert err.value.code == BUSY
     assert svc.call("job.list")[0]["status"] == "running"
     assert svc.call("job.cancel", job_id=job.id) == {"cancelled": True}
@@ -288,7 +288,7 @@ class Child:
 def test_child_process_protocol_and_resume_after_kill(tmp_path, wedding_shoot):
     project = str(tmp_path / "kill.mcsync")
     child = Child(tmp_path / "cache")
-    assert child.call("engine.hello")["protocol"] == 1
+    assert child.call("engine.hello")["protocol"] == 2
     child.call("project.create", path=project)
     job = child.call("media.import", paths=[str(wedding_shoot.root)])["job_id"]
     child.wait_for(lambda m: m.get("method") == "job.done" and m["params"]["job_id"] == job)

@@ -112,6 +112,9 @@ class SolverParams:
     creation_time_confidence: float = 0.3
     chapter_confidence: float = 0.95
     confident_threshold: float = 0.7
+    #: Sync groups other than the reference's are separate sessions in a production; set True when every clip was
+    #: expected to join one timeline (then clips in other groups need review).
+    detached_groups_need_review: bool = False
 
 
 DEFAULT_PARAMS = SyncParams()

@@ -189,12 +189,16 @@ class SyncEngine:
         tgt: ClipInput,
         *,
         window: tuple[float, float] | None = None,
+        fallback: bool | None = None,
     ) -> PairwiseMatch:
         """Match two clips; ``window`` restricts ``start(tgt) - start(ref)``.
 
         Also used by the UI to "snap" a roughly dragged clip: pass a narrow
-        window around the dragged position.
+        window around the dragged position. ``fallback`` overrides
+        ``SyncOptions.fallback_full_search`` (a window that came from the audio
+        itself, not from a clock, is not worth a full search when it fails).
         """
+        use_fallback = self.options.fallback_full_search if fallback is None else fallback
         if ref.audio is None or tgt.audio is None:
             raise ValueError("both clips need audio to be matched")
         # Fine windows are laid over the target, so make the shorter clip the target.
@@ -208,7 +212,7 @@ class SyncEngine:
         params = self.options.params
         estimate = estimate_offset(a.audio, b.audio, params, search=audio_window)  # type: ignore[arg-type]
         flags: tuple[Flag, ...] = ()
-        if audio_window is not None and self.options.fallback_full_search and estimate.status != MatchStatus.CONFIDENT:
+        if audio_window is not None and use_fallback and estimate.status != MatchStatus.CONFIDENT:
             unrestricted = estimate_offset(a.audio, b.audio, params)  # type: ignore[arg-type]
             if unrestricted.status == MatchStatus.CONFIDENT:
                 estimate, flags = unrestricted, (Flag.CLOCK_MISMATCH,)
@@ -346,3 +350,23 @@ def _match_task(
     options: SyncOptions, ref: ClipInput, tgt: ClipInput, window: tuple[float, float] | None
 ) -> PairwiseMatch:
     return SyncEngine(options).match_pair(ref, tgt, window=window)
+
+
+def verify_pair(
+    options: SyncOptions,
+    ref: ClipInput,
+    tgt: ClipInput,
+    windows: Sequence[tuple[float, float] | None],
+    stage: str,
+) -> PairwiseMatch:
+    """Match a planned pair (see :mod:`.candidates`): try each window until one gives a confident match; return
+    the most confident result. Only clock windows fall back to a full search (flagged ``clock_mismatch``)."""
+    engine = SyncEngine(options)
+    best: PairwiseMatch | None = None
+    for window in windows or [None]:
+        match = engine.match_pair(ref, tgt, window=window, fallback=stage == "clock")
+        if best is None or match.confidence > best.confidence:
+            best = match
+        if match.status == MatchStatus.CONFIDENT:
+            break
+    return best  # type: ignore[return-value]

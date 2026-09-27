@@ -37,6 +37,7 @@ ALTER TABLE media_file ADD COLUMN timecode TEXT;
 ALTER TABLE media_file ADD COLUMN creation_time TEXT;         -- ISO 8601
 ALTER TABLE media_file ADD COLUMN duplicate_of INTEGER REFERENCES media_file (id) ON DELETE SET NULL;
 ALTER TABLE media_file ADD COLUMN duplicate_decision TEXT;   -- NULL (undecided) | 'keep' | 'ignore'
+ALTER TABLE media_file ADD COLUMN duplicate_reason TEXT;     -- identical | probable
 CREATE INDEX media_file_filename ON media_file (filename);
 CREATE INDEX media_file_kind ON media_file (kind);
 CREATE INDEX media_file_creation ON media_file (creation_time);
