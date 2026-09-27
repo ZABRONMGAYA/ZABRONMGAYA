@@ -71,6 +71,23 @@ def test_staged_pipeline_synchronises_a_multi_session_production(service, produc
     assert again["matched"] == 0 and again["reused"] == result["pairs"]
 
 
+def test_a_fill_decided_before_a_pause_starts_nothing(service, production, tmp_path):
+    # The controller decides to start work, then a pause arrives before it claims any: nothing may start.
+    service.project_create(str(tmp_path / "race.syncora"))
+    pipeline = service.pipeline
+    pipeline.pause()
+    service.media_add([str(production.root)])
+    deadline = time.time() + 60
+    while pipeline.import_request(1).walking and time.time() < deadline:
+        time.sleep(0.05)
+    pending = service.project.task_counts()["probe"]["pending"]
+    assert pending > 0
+    pipeline._maybe_pending["probe"] = True
+    assert pipeline._fill() == 0
+    assert service.project.task_counts()["probe"]["pending"] == pending
+    service.project_close()
+
+
 def test_pause_resume_cancel_retry_and_restart(service, production, tmp_path):
     service.project_create(str(tmp_path / "control.syncora"))
     pipeline = service.pipeline

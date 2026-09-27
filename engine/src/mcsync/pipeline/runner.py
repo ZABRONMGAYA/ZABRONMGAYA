@@ -437,7 +437,12 @@ class Pipeline:
             kinds = ["match", "extend"] if kind == "match" else [kind]
             if kind == "match" and (self._sync is None or self._sync.get("phase") not in ("matching", "extending")):
                 continue
-            tasks = self.project.claim(kinds, free)
+            # Checked again under the lock at the moment of claiming: the loop decided to fill before a pause may
+            # have arrived, and nothing may start once pause() has returned.
+            with self._cond:
+                if self._paused or self._stopping:
+                    return started
+                tasks = self.project.claim(kinds, free)
             if len(tasks) < free:
                 self._maybe_pending[kind] = False
             for t in tasks:
@@ -670,6 +675,9 @@ class Pipeline:
             )
 
     def _advance(self) -> None:
+        with self._cond:
+            if self._paused or self._stopping:
+                return
         if self._aux is not None:
             if not self._aux.done():
                 return
