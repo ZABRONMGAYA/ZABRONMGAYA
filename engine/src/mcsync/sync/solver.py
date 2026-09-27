@@ -195,6 +195,7 @@ def solve_placements(
     use_audio: bool = True,
     use_clock: bool = True,
     params: SolverParams = DEFAULT_SOLVER_PARAMS,
+    report_edges: bool = True,
 ) -> SyncResult:
     corrections = corrections or ManualCorrections()
     index = {c.clip_id: k for k, c in enumerate(clips)}
@@ -425,16 +426,17 @@ def solve_placements(
         )
         for mo, ok in zip(corrections.offsets, manual_ok, strict=True)
     ]
-    for m, e, reason in audio_reports:
-        if e is None:
-            reports.append(
-                EdgeReport(
-                    EdgeKind.AUDIO, m.ref_id, m.tgt_id, m.offset_s, None, m.confidence, EdgeStatus.IGNORED, reason
+    if report_edges:
+        for m, e, reason in audio_reports:
+            if e is None:
+                reports.append(
+                    EdgeReport(
+                        EdgeKind.AUDIO, m.ref_id, m.tgt_id, m.offset_s, None, m.confidence, EdgeStatus.IGNORED, reason
+                    )
                 )
-            )
-        else:
-            reports.append(_edge_report(e, node_names))
-    reports.extend(_edge_report(e, node_names) for e in edges if e.kind == EdgeKind.CLOCK)
+            else:
+                reports.append(_edge_report(e, node_names))
+        reports.extend(_edge_report(e, node_names) for e in edges if e.kind == EdgeKind.CLOCK)
 
     return SyncResult(
         reference_id=reference_id,

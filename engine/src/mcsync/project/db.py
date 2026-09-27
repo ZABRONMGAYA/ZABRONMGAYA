@@ -134,6 +134,8 @@ class Project:
         self.path = path
         self._conn = conn
         self._lock = threading.RLock()
+        #: The placements as last saved or loaded (None: not read yet), so a solve rewrites only what changed.
+        self._saved_placements: dict[int, ClipPlacement] | None = None
         self._clip_cache: list[ClipRow] | None = None
         self._clip_version = 0
 
@@ -230,6 +232,7 @@ class Project:
     def _clips_changed(self) -> None:
         self._clip_cache = None
         self._clip_version += 1
+        self._saved_placements = None  # removed clips take their placements with them (ON DELETE CASCADE)
 
     @property
     def clip_version(self) -> int:
@@ -968,6 +971,12 @@ class Project:
         rows = self._query("SELECT match_json FROM pair_match WHERE run_id = ? ORDER BY rowid", (run_id,))
         return [match_from_dict(json.loads(r["match_json"])) for r in rows]
 
+    def run_match_stamp(self, run_id: int) -> tuple[int, int]:
+        """Changes whenever a run's matches do: their count and newest row (for caching them)."""
+        row = self._query("SELECT COUNT(*) AS n, COALESCE(MAX(rowid), 0) AS last FROM pair_match WHERE run_id = ?",
+                          (run_id,))[0]  # fmt: skip
+        return int(row["n"]), int(row["last"])
+
     def run_match_summaries(self, run_id: int) -> list[dict]:
         """Matches of a run without their details (fast: no JSON)."""
         rows = self._query(
@@ -1053,19 +1062,32 @@ class Project:
     # ------------------------------------------------------------- placements
 
     def save_placements(self, result: SyncResult) -> None:
+        """Store the latest solve. Only placements that changed are written: a correction usually moves one group."""
         now = _now()
+        new = {int(cid): p for cid, p in result.placements.items()}
         with self._tx() as c:
-            c.execute("DELETE FROM placement")
+            old = self._saved_placements
+            if old is None:
+                c.execute("DELETE FROM placement")
+                changed = list(new.items())
+            else:
+                gone = [cid for cid in old if cid not in new]
+                c.executemany("DELETE FROM placement WHERE clip_id = ?", [(cid,) for cid in gone])
+                changed = [(cid, p) for cid, p in new.items() if old.get(cid) != p]
             c.executemany(
-                "INSERT INTO placement (clip_id, placement_json, solved_at) VALUES (?, ?, ?)",
-                [(int(cid), json.dumps(to_jsonable(p)), now) for cid, p in result.placements.items()],
+                "INSERT OR REPLACE INTO placement (clip_id, placement_json, solved_at) VALUES (?, ?, ?)",
+                [(cid, json.dumps(to_jsonable(p)), now) for cid, p in changed],
             )
+            self._saved_placements = new
 
     def placements(self) -> dict[int, ClipPlacement]:
-        return {
-            int(r["clip_id"]): placement_from_dict(json.loads(r["placement_json"]))
-            for r in self._query("SELECT * FROM placement")
-        }
+        with self._lock:
+            if self._saved_placements is None:
+                self._saved_placements = {
+                    int(r["clip_id"]): placement_from_dict(json.loads(r["placement_json"]))
+                    for r in self._query("SELECT * FROM placement")
+                }
+            return dict(self._saved_placements)
 
     # ---------------------------------------------------------------- exports
 

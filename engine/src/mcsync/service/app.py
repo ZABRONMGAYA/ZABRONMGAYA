@@ -34,7 +34,7 @@ from typing import Any
 
 from mcsync import __version__
 from mcsync.export import ExportOptions, export_timeline
-from mcsync.media.cache import AnalysisCache
+from mcsync.media.cache import AnalysisCache, params_key
 from mcsync.media.extract import extract_to_cache
 from mcsync.media.fingerprint import fingerprint
 from mcsync.media.library import build_clip_inputs
@@ -56,7 +56,7 @@ from mcsync.serialize import to_jsonable
 from mcsync.sync.candidates import PlannedPair
 from mcsync.sync.engine import SyncEngine, SyncOptions, create_match_pool
 from mcsync.sync.params import DEFAULT_PARAMS, SyncParams
-from mcsync.sync.types import ClipInput, PlacementMethod, PlacementStatus, SyncMode
+from mcsync.sync.types import ClipInput, PairwiseMatch, PlacementMethod, PlacementStatus, SyncMode
 from mcsync.timecode import parse_frame_rate
 from mcsync.timeline import build_timeline
 
@@ -106,6 +106,11 @@ class EngineService:
         self._tools: FFmpegTools | None = None
         self._thumbs = ThreadPoolExecutor(2, thread_name_prefix="thumbnail")
         self._thumbs_busy: set[str] = set()
+        # Kept between solves so a correction does not re-read what has not changed (see _clip_inputs, _run_matches).
+        self._signals: dict[tuple, Any] = {}
+        self._matches_memo: tuple[tuple, list[PairwiseMatch]] | None = None
+        self._inputs_memo: tuple[tuple, list[ClipInput]] | None = None
+        self._warming = threading.Lock()
         raise_open_file_limit()
         if server is None:
             return
@@ -191,6 +196,9 @@ class EngineService:
         self.reset_match_pool()
 
     def _close_project(self) -> None:
+        self._signals.clear()
+        self._matches_memo = None
+        self._inputs_memo = None
         if self.pipeline is not None:
             self.pipeline.stop()
             self.pipeline = None
@@ -687,27 +695,48 @@ class EngineService:
         """Engine inputs for the project's clips. Signals are mapped lazily; with ``extract``, audio not analysed
         yet is extracted first (otherwise such clips count as having no audio)."""
         settings = self._settings()
+        pkey = params_key(self.params)
+        # Everything the inputs depend on besides the files' content (which the fingerprint covers): when none of it
+        # changed since the last solve, the inputs are reused as they are.
+        key = (
+            bool(settings["timecode_jam_synced"]), bool(settings["use_creation_time"]), pkey,
+            tuple((r.id, r.fingerprint, r.audio_stream, r.audio_channel, r.device_key, r.chapter_take,
+                   r.chapter_index, r.chapter_offset_s) for r in rows),
+        )  # fmt: skip
+        if self._inputs_memo is not None and self._inputs_memo[0] == key:
+            return self._inputs_memo[1]
         items = []
         for k, row in enumerate(rows):
             item = row.to_media_item()
             if item.audio_stream is not None:
-                entry = self.cache.entry(row.fingerprint, item.audio_stream.index, channel=row.audio_channel,
-                                         params=self.params)  # fmt: skip
-                if entry.exists():
-                    item.signal = entry.load()
-                elif extract and row.status != "offline":
-                    if job is not None:
-                        job.report(0.1 * k / len(rows), f"Extracting audio from {row.name}")
-                    item.signal = extract_to_cache(row.info, entry, stream=item.audio_stream,
-                                                   channel=row.audio_channel, params=self.params,
-                                                   cancel=job.cancel if job else None)  # fmt: skip
+                # Signals are mapped lazily, so keeping them costs little; re-opening 4,000 cache entries on every
+                # correction took most of a second.
+                skey = (row.fingerprint, item.audio_stream.index, row.audio_channel, pkey)
+                item.signal = self._signals.get(skey)
+                if item.signal is None:
+                    entry = self.cache.entry(row.fingerprint, item.audio_stream.index, channel=row.audio_channel,
+                                             params=self.params)  # fmt: skip
+                    if entry.exists():
+                        item.signal = entry.load()
+                    elif extract and row.status != "offline":
+                        if job is not None:
+                            job.report(0.1 * k / len(rows), f"Extracting audio from {row.name}")
+                        item.signal = extract_to_cache(row.info, entry, stream=item.audio_stream,
+                                                       channel=row.audio_channel, params=self.params,
+                                                       cancel=job.cancel if job else None)  # fmt: skip
+                    if item.signal is not None:
+                        self._signals[skey] = item.signal
             items.append(item)
-        return build_clip_inputs(
+        inputs = build_clip_inputs(
             items,
             timecode_jam_synced=bool(settings["timecode_jam_synced"]),
             use_creation_time=bool(settings["use_creation_time"]),
             clip_ids=[r.engine_id for r in rows],
         )
+        # Reused only when every clip has its analysis: a clip still waiting for it gets its signal on a later call.
+        if all(it.signal is not None or it.audio_stream is None for it in items):
+            self._inputs_memo = (key, inputs)
+        return inputs
 
     def _engine(self) -> SyncEngine:
         settings = self._settings()
@@ -801,7 +830,7 @@ class EngineService:
         if clips is None:
             clips = self._clip_inputs(rows, extract=False)
         run_id = project.last_completed_run()
-        matches = project.run_matches(run_id) if run_id is not None else []
+        matches = self._run_matches(run_id) if run_id is not None else []
         current = {c.clip_id for c in clips}
         matches = [m for m in matches if m.ref_id in current and m.tgt_id in current]
         corrections = project.corrections()
@@ -812,10 +841,18 @@ class EngineService:
                 rejected_pairs=corrections.rejected_pairs,
                 excluded_clips=set(corrections.excluded_clips) | ignored,
             )
-        result = self._engine().solve(clips, matches, corrections)
+        result = self._engine().solve(clips, matches, corrections, report_edges=False)
         project.save_placements(result)
         placements = {int(cid): p for cid, p in result.placements.items()}
         return to_jsonable(build_timeline(rows, placements, int(result.reference_id)))
+
+    def _run_matches(self, run_id: int) -> list[PairwiseMatch]:
+        """A finished run's matches, parsed once: 26,000 of them take over a second to load and decode."""
+        project = self._require_project()
+        key = (str(project.path), run_id, *project.run_match_stamp(run_id))
+        if self._matches_memo is None or self._matches_memo[0] != key:
+            self._matches_memo = (key, project.run_matches(run_id))
+        return self._matches_memo[1]
 
     def sync_solve(self) -> dict:
         self._require_idle({"sync"})
@@ -941,7 +978,29 @@ class EngineService:
         project = self._require_project()
         placements = project.placements()
         ref = self._settings().get("reference_clip_id")
-        return to_jsonable(build_timeline(project.clips(), placements, ref))
+        timeline = to_jsonable(build_timeline(project.clips(), placements, ref))
+        self._warm_solve_caches()
+        return timeline
+
+    def _warm_solve_caches(self) -> None:
+        """Prepare what a correction needs (every clip's signal, the last run's matches) in the background, so the
+        first drag on a large synchronised project does not wait seconds for it."""
+        project = self.project
+        if project is None or project.last_completed_run() is None or not self._warming.acquire(blocking=False):
+            return
+
+        def work() -> None:
+            try:
+                run_id = project.last_completed_run()
+                if run_id is not None and project is self.project:
+                    self._clip_inputs(project.clips(), extract=False)
+                    self._run_matches(run_id)
+            except Exception:  # noqa: BLE001 - the project closed meanwhile: nothing to prepare
+                pass
+            finally:
+                self._warming.release()
+
+        threading.Thread(target=work, name="warm-solve", daemon=True).start()
 
     # ---------------------------------------------------------------- export
 
@@ -1022,6 +1081,7 @@ class EngineService:
     def cache_clear_unused(self) -> dict:
         """Delete cached analysis that the open project does not use (it is recomputed if ever needed again)."""
         keep = self._project_cache_dirs()
+        self._signals.clear()
         budget, self.cache.max_bytes = self.cache.max_bytes, 0
         try:
             freed = self.cache.evict(keep=frozenset(keep))

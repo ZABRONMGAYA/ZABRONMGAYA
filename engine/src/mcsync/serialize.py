@@ -32,13 +32,35 @@ from mcsync.sync.types import (
     WindowMeasurement,
 )
 
+_FIELDS: dict[type, tuple[str, ...]] = {}
+
+
+def _field_names(cls: type) -> tuple[str, ...]:
+    """A dataclass's public field names, looked up once per class (timelines hold tens of thousands of objects)."""
+    names = _FIELDS.get(cls)
+    if names is None:
+        names = _FIELDS[cls] = tuple(f.name for f in dataclasses.fields(cls) if not f.name.startswith("_"))
+    return names
+
 
 def to_jsonable(obj: Any, *, skip: frozenset[str] = frozenset()) -> Any:
     """Recursively convert to JSON-compatible values. ``skip`` drops dataclass fields by name."""
-    if obj is None or isinstance(obj, (bool, int, str)):
+    t = type(obj)
+    # Exact types first: the common cases, without the isinstance chain below.
+    if obj is None or t is str or t is int or t is bool:
         return obj
+    if t is float:
+        return obj if math.isfinite(obj) else None
+    if t is list or t is tuple:
+        return [to_jsonable(v, skip=skip) for v in obj]
+    if t is dict:
+        return {k if type(k) is str else str(k): to_jsonable(v, skip=skip) for k, v in obj.items()}
+    if hasattr(t, "__dataclass_fields__"):
+        return {name: to_jsonable(getattr(obj, name), skip=skip) for name in _field_names(t) if name not in skip}
     if isinstance(obj, Enum):
         return obj.value
+    if isinstance(obj, (bool, int, str)):
+        return obj
     if isinstance(obj, float):
         return obj if math.isfinite(obj) else None
     if isinstance(obj, np.generic):
@@ -49,12 +71,6 @@ def to_jsonable(obj: Any, *, skip: frozenset[str] = frozenset()) -> Any:
         return obj.isoformat()
     if isinstance(obj, Path):
         return str(obj)
-    if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
-        return {
-            f.name: to_jsonable(getattr(obj, f.name), skip=skip)
-            for f in dataclasses.fields(obj)
-            if f.name not in skip and not f.name.startswith("_")
-        }
     if isinstance(obj, dict):
         return {str(k): to_jsonable(v, skip=skip) for k, v in obj.items()}
     if isinstance(obj, (list, tuple, set, frozenset)):

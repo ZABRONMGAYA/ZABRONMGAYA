@@ -169,7 +169,11 @@ class SyncEngine:
         clips: Sequence[ClipInput],
         matches: Sequence[PairwiseMatch],
         corrections: ManualCorrections | None = None,
+        *,
+        report_edges: bool = True,
     ) -> SyncResult:
+        """Place every clip. ``report_edges=False`` leaves out the per-measurement report (``SyncResult.edges``),
+        which interactive corrections do not need and which costs a quarter of a second at 30,000 measurements."""
         self._validate(clips)
         mode = self.options.mode
         excluded = corrections.excluded_clips if corrections else set()
@@ -181,6 +185,7 @@ class SyncEngine:
             use_audio=mode != SyncMode.TIMECODE,
             use_clock=mode != SyncMode.AUDIO,
             params=self.options.solver,
+            report_edges=report_edges,
         )
 
     def match_pair(

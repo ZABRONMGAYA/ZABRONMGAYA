@@ -15,6 +15,7 @@ import inspect
 import json
 import sys
 import threading
+import time
 import traceback
 from collections.abc import Callable
 from typing import Any, TextIO
@@ -31,6 +32,9 @@ NO_PROJECT = -32000
 BUSY = -32001
 APP_ERROR = -32002
 FFMPEG_MISSING = -32003
+
+#: Requests slower than this are noted in the engine log (they hold up every request queued behind them).
+SLOW_REQUEST_S = 0.5
 
 
 class RpcError(Exception):
@@ -96,10 +100,15 @@ class JsonRpcServer:
                                RpcError(INVALID_REQUEST, "invalid request"))  # fmt: skip
         req_id = request.get("id")
         is_notification = "id" not in request
+        started = time.perf_counter()
         try:
             result = self._dispatch(request["method"], request.get("params"))
         except Exception as exc:  # noqa: BLE001 - every failure becomes a JSON-RPC error
             return None if is_notification else self._error(req_id, self._map_error(exc))
+        finally:
+            elapsed = time.perf_counter() - started
+            if elapsed >= SLOW_REQUEST_S:  # requests are served one at a time: a slow one delays the others
+                print(f"slow request: {request['method']} {elapsed:.2f} s", file=self.log, flush=True)
         return None if is_notification else {"jsonrpc": "2.0", "id": req_id, "result": result}
 
     def _dispatch(self, method: str, params: Any) -> Any:

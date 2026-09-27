@@ -134,9 +134,10 @@ def _review_reason(clip: TimelineClip, overlapping: bool) -> str | None:
         return "device_overlap"
     if clip.status == PlacementStatus.UNSYNCED.value and Flag.EXCLUDED.value not in flags:
         return "unsynced"
-    if Flag.DETACHED_GROUP.value in flags:
-        return "detached"
     if clip.status == PlacementStatus.NEEDS_REVIEW.value:
+        # A clip in another sync group (another session) is only worth a look when the solver asked for one.
+        if Flag.DETACHED_GROUP.value in flags:
+            return "detached"
         return "metadata_only" if clip.method == PlacementMethod.METADATA.value else "uncertain"
     if clip.media_status != "online":
         return "offline"

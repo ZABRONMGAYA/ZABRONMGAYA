@@ -49,6 +49,19 @@ def test_groups_tracks_and_origin():
     assert tl.stats == {"clips": 6, "synced": 4, "needs_review": 2, "unsynced": 0}
 
 
+def test_confident_clips_of_another_session_are_not_reviewed():
+    # Every clip of a second session carries the detached flag; only the ones the solver marked need a look.
+    rows = [row(1, 10, "recorder", 600), row(2, 20), row(3, 30), row(4, 30, status="offline")]
+    placements = {
+        1: placed(1, 0.0, method=PlacementMethod.REFERENCE),
+        2: placed(2, 0.0, group=1, flags=(Flag.DETACHED_GROUP,)),
+        3: placed(3, 70.0, group=1, status=PlacementStatus.NEEDS_REVIEW, flags=(Flag.DETACHED_GROUP,)),
+        4: placed(4, 140.0, group=1, flags=(Flag.DETACHED_GROUP,)),
+    }
+    tl = build_timeline(rows, placements, reference_clip_id=1)
+    assert [(r.clip_id, r.reason) for r in tl.review] == [(3, "detached"), (4, "offline")]
+
+
 def test_overlapping_clips_of_one_device_get_a_lane_and_a_review():
     rows = [row(1, 10, "recorder", 600), row(2, 20), row(3, 20)]
     placements = {1: placed(1, 0.0), 2: placed(2, 10.0), 3: placed(3, 40.0)}  # 3 starts before 2 ends
