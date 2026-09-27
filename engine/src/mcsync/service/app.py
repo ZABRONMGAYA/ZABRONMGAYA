@@ -38,6 +38,7 @@ from mcsync.media.cache import AnalysisCache
 from mcsync.media.extract import extract_to_cache
 from mcsync.media.fingerprint import fingerprint
 from mcsync.media.library import build_clip_inputs
+from mcsync.media.thumbnail import make_thumbnail, thumbnail_path
 from mcsync.media.tools import FFmpegNotFound, FFmpegTools, find_tools
 from mcsync.media.waveform import PEAK_LEVELS
 from mcsync.pipeline.discovery import volume_of, volume_online, walk
@@ -102,6 +103,8 @@ class EngineService:
         self._pool: Executor | None = None
         self._pool_lock = threading.Lock()
         self._tools: FFmpegTools | None = None
+        self._thumbs = ThreadPoolExecutor(2, thread_name_prefix="thumbnail")
+        self._thumbs_busy: set[str] = set()
         raise_open_file_limit()
         if server is None:
             return
@@ -112,7 +115,7 @@ class EngineService:
             "project.stats",
             "media.import", "media.add", "media.list", "media.index", "media.remove", "media.rescan",
             "media.duplicates", "media.decide_duplicates", "media.offline", "media.relink_folder",
-            "media.relink_file", "media.ignore_offline",
+            "media.relink_file", "media.ignore_offline", "media.thumbnails",
             "device.update", "device.create", "clip.assign_device", "clip.set_audio",
             "session.list", "session.create", "session.assign",
             "pipeline.status", "pipeline.pause", "pipeline.resume", "pipeline.restart",
@@ -179,6 +182,7 @@ class EngineService:
                 self._pool = None
 
     def close(self) -> None:
+        self._thumbs.shutdown(wait=False, cancel_futures=True)
         self.jobs.cancel_all()
         for job in list(self.jobs.jobs.values()):
             job.finished.wait(10)
@@ -550,6 +554,34 @@ class EngineService:
         if force:
             self._pipeline().import_paths([path])
         return self.media_offline()
+
+    def media_thumbnails(self, clip_ids: list[int]) -> dict:
+        """Poster frames of these clips: cached ones now as ``[clip_id, path]``; the rest are made in the background
+        and announced with ``media.thumbnails`` notifications."""
+        project = self._require_project()
+        rows = {r.id: r for r in project.clips()}
+        ready: list[list] = []
+        for cid in clip_ids[:400]:
+            row = rows.get(cid)
+            if row is None or not row.info.video:
+                continue
+            path = thumbnail_path(self.cache.root, row.fingerprint)
+            if path.is_file():
+                ready.append([cid, str(path)])
+            elif row.status == "online" and row.fingerprint not in self._thumbs_busy:
+                self._thumbs_busy.add(row.fingerprint)
+                self._thumbs.submit(self._make_thumbnail, row)
+        return {"thumbnails": ready}
+
+    def _make_thumbnail(self, row: ClipRow) -> None:
+        try:
+            path = make_thumbnail(row.info, row.fingerprint, self.cache.root, self.tools())
+            if path is not None:
+                self.notify("media.thumbnails", {"thumbnails": [[row.id, str(path)]]})
+        except Exception:  # noqa: BLE001 - a missing poster frame is never an error worth reporting
+            pass
+        finally:
+            self._thumbs_busy.discard(row.fingerprint)
 
     def device_update(self, device_id: int, name: str | None = None, kind: str | None = None) -> dict:
         self._require_project().update_device(device_id, name=name, kind=kind)

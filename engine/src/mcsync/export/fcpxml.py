@@ -95,7 +95,7 @@ class _Writer:
             self.asset(resources, media)
 
         library = _el(root, "library")
-        event = _el(library, "event", name="Multicam Sync")
+        event = _el(library, "event", name="Syncora")
         project = _el(event, "project", name=seq.name)
         tc_start = Fraction(seq.start_frame) / rate
         duration = Fraction(seq.duration_frames) / rate

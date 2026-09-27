@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Builds the FFmpeg that ships inside Multicam Sync: one pinned release on every platform, LGPL, decode only.
+# Builds the FFmpeg that ships inside Syncora: one pinned release on every platform, LGPL, decode only.
 #
 #   packaging/build_ffmpeg.sh OUTPUT_DIR
 #
 # The same version everywhere matters: FFmpeg releases disagree about some edge-list timings, which would move clips.
-# Decode only: no encoders except the PCM the engine reads its analysis audio as, so originals can never be
-# re-encoded. LGPL 2.1+: no GPL or non-free parts, statically linked, with the licence and this recipe alongside.
+# Decode only: no encoders except the PCM the engine reads its analysis audio as and raw pixels for thumbnails,
+# so originals can never be re-encoded. LGPL 2.1+: no GPL or non-free parts, statically linked, with the licence and this recipe alongside.
 # Needs git, a C compiler, make and nasm (macOS: Xcode tools + brew nasm; Windows: MSYS2 MinGW64).
 set -euo pipefail
 
@@ -30,8 +30,8 @@ FLAGS=(
   --enable-static --disable-shared
   --disable-programs --enable-ffmpeg --enable-ffprobe
   --disable-doc --disable-network --disable-devices --disable-hwaccels
-  --disable-encoders --enable-encoder=pcm_f32le,pcm_s16le
-  --disable-muxers --enable-muxer=pcm_f32le,wav,null   # "-f f32le" is the pcm_f32le muxer
+  --disable-encoders --enable-encoder=pcm_f32le,pcm_s16le,rawvideo
+  --disable-muxers --enable-muxer=pcm_f32le,wav,null,rawvideo   # "-f f32le" is the pcm_f32le muxer
   --disable-debug
 )
 EXE=""
@@ -62,19 +62,19 @@ require() {  # require KIND NAME...: each NAME must appear in `ffmpeg -KIND`
     grep -Eq "^ *[A-Z.|-]+ +$name( |,|$)" <<<"$listing" || { echo "FFmpeg build lacks $kind $name" >&2; exit 1; }
   done
 }
-require muxers f32le
-require encoders pcm_f32le
-require filters aresample pan
+require muxers f32le rawvideo
+require encoders pcm_f32le rawvideo
+require filters aresample pan scale
 require demuxers mov,mp4,m4a,3gp,3g2,mj2 mpegts wav w64 aiff mp3 flac matroska,webm avi mxf ogg
 require decoders aac ac3 eac3 mp3 flac alac opus vorbis pcm_s16le pcm_s24le pcm_s32le pcm_f32le h264 hevc prores
 
 cp "ffmpeg$EXE" "ffprobe$EXE" "$OUT/"
 cp COPYING.LGPLv2.1 "$OUT/LICENSE-FFmpeg.txt"
 {
-  echo "FFmpeg $VERSION (commit $COMMIT), built for Multicam Sync."
+  echo "FFmpeg $VERSION (commit $COMMIT), built for Syncora."
   echo "Source: https://github.com/FFmpeg/FFmpeg/tree/$VERSION"
   echo "Licence: GNU LGPL 2.1 or later (LICENSE-FFmpeg.txt). To rebuild or replace it, run"
-  echo "engine/packaging/build_ffmpeg.sh from the Multicam Sync sources, which configures FFmpeg with:"
+  echo "engine/packaging/build_ffmpeg.sh from the Syncora sources, which configures FFmpeg with:"
   echo "  ${FLAGS[*]}"
 } >"$OUT/README-FFmpeg.txt"
 "$OUT/ffmpeg$EXE" -hide_banner -version | sed -n 1p # not head: with pipefail, SIGPIPE would fail the build

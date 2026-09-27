@@ -38,10 +38,10 @@ def default_cache_dir() -> Path:
     if env := os.environ.get("MCSYNC_CACHE_DIR"):
         return Path(env)
     if sys.platform == "darwin":
-        return Path.home() / "Library" / "Caches" / "MulticamSync"
+        return Path.home() / "Library" / "Caches" / "Syncora"
     if sys.platform == "win32":
-        return Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")) / "MulticamSync" / "Cache"
-    return Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "multicam-sync"
+        return Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")) / "Syncora" / "Cache"
+    return Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "syncora"
 
 
 def params_key(params: SyncParams) -> str:

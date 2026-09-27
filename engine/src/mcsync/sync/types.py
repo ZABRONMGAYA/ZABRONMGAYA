@@ -47,6 +47,8 @@ class Flag(StrEnum):
     CLOCK_MISMATCH = "clock_mismatch"
     # Global placement
     REJECTED_INCONSISTENT = "rejected_inconsistent"
+    #: An uncertain match between clips that stronger evidence already places (not used).
+    REDUNDANT_UNCERTAIN = "redundant_uncertain"
     USER_REJECTED = "user_rejected"
     BELOW_THRESHOLD = "below_threshold"
     CONFLICTING_MATCHES = "conflicting_matches"

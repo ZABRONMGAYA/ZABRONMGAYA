@@ -29,7 +29,7 @@
     </asset>
   </resources>
   <library>
-    <event name="Multicam Sync">
+    <event name="Syncora">
       <project name="Smith wedding">
         <sequence format="r1" duration="14639625/24000s" tcStart="86486400/24000s" tcFormat="NDF" audioLayout="stereo" audioRate="48k">
           <spine>

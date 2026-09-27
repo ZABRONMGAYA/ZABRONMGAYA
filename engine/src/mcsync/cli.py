@@ -172,7 +172,7 @@ def _print_timeline(result: dict) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     multiprocessing.freeze_support()  # the packaged engine starts matcher processes from itself
-    parser = argparse.ArgumentParser(prog="mcsync", description="Multicam Sync engine")
+    parser = argparse.ArgumentParser(prog="mcsync", description="Syncora engine")
     parser.add_argument("--version", action="version", version=f"mcsync {__version__}")
     parser.add_argument("--cache-dir", default=None, help="analysis cache location")
     parser.add_argument("--workers", type=int, default=None, help="matcher processes (default: cores - 1)")

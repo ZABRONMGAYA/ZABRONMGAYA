@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mcsync-engine"
-version = "0.1.0"
+version = "1.1.0"
 description = "Audio and timecode synchronisation engine for multicamera video"
 readme = "README.md"
 requires-python = ">=3.11"

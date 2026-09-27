@@ -112,6 +112,13 @@ class SolverParams:
     creation_time_confidence: float = 0.3
     chapter_confidence: float = 0.95
     confident_threshold: float = 0.7
+    #: Clocks at least this precise tie clips together as firmly as a confident audio match (timecode, sound
+    #: recorder time references and chapters; not camera creation times).
+    precise_clock_sigma_s: float = 0.1
+    #: Uncertain audio matches only attach clips that confident matches, precise clocks and manual placements leave
+    #: unconnected. Inside a group those already tie together, an uncertain match adds nothing but risk: repetitive
+    #: audio (a music loop, a metronome) offers many plausible wrong offsets.
+    uncertain_edges_bridge_only: bool = True
     #: Sync groups other than the reference's are separate sessions in a production; set True when every clip was
     #: expected to join one timeline (then clips in other groups need review).
     detached_groups_need_review: bool = False

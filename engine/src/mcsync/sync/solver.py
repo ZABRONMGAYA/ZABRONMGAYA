@@ -262,6 +262,9 @@ def solve_placements(
                 )
             )
 
+    if params.uncertain_edges_bridge_only:
+        _drop_redundant_uncertain(edges, corrections, index, n_nodes, params)
+
     def anchor_for(nodes: list[int]) -> int:
         if ref_node in nodes:
             return ref_node
@@ -455,6 +458,38 @@ def solve_placements(
 # ---------------------------------------------------------------------------
 # Stages
 # ---------------------------------------------------------------------------
+
+
+def _drop_redundant_uncertain(
+    edges: list[_Edge],
+    corrections: ManualCorrections,
+    index: dict[str, int],
+    n_nodes: int,
+    params: SolverParams,
+) -> None:
+    """Deactivate uncertain audio edges inside groups that stronger evidence already connects."""
+    parent = list(range(n_nodes))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    def strong(e: _Edge) -> bool:
+        if e.kind == EdgeKind.AUDIO:
+            return e.confidence >= params.confident_threshold
+        return e.sigma_s <= params.precise_clock_sigma_s
+
+    for e in edges:
+        if strong(e):
+            parent[find(e.i)] = find(e.j)
+    for mo in corrections.offsets:
+        parent[find(index[mo.clip_id])] = find(index[mo.anchor_clip_id])
+    for e in edges:
+        if e.kind == EdgeKind.AUDIO and not strong(e) and find(e.i) == find(e.j):
+            e.active = False
+            e.reason = Flag.REDUNDANT_UNCERTAIN
 
 
 def _solve_rates(edges: list[_Edge], n_nodes: int, anchor_for: Callable[[list[int]], int]) -> np.ndarray:
