@@ -224,7 +224,7 @@ engine methods (typed by `app/src/api/contract.ts`), engine events, native file 
 │   │   ├── components/        toasts
 │   │   └── lib/               formatting, labels, search grammar (query.ts), windowing (virtual.ts)
 │   ├── tests/                 Vitest unit tests (format, geometry, waveform maths, store, search, windowing)
-│   └── e2e/                   Playwright-for-Electron: editor workflow, 260-file production, 300-clip timeline benchmark
+│   └── e2e/                   Playwright-for-Electron: editor workflow, 279-file production, 300-clip timeline benchmark
 ├── fixtures/export/           golden xmeml and FCPXML files (test media is generated)    [M5 ✅]
 └── .github/workflows/         engine-ci.yml [M1 ✅] · app-ci.yml [M4 ✅] · release.yml [M6 ✅]
 ```
@@ -298,7 +298,7 @@ engine methods (typed by `app/src/api/contract.ts`), engine events, native file 
 | UI unit tests | Formatting, timeline geometry, waveform maths (checked against the engine's μ-law decoder), store actions against a fake bridge | `app/tests/` [M4 ✅] |
 | UI end-to-end | Playwright for Electron with the real engine: new project → import a generated shoot → sync (positions checked against the truth) → inspect → drag → undo → nudge → snap → reject/restore → export both formats → reopen | `app/e2e/app.spec.ts` [M4 ✅, M5 ✅] |
 | UI performance | 300-clip, 3-hour project served by a stand-in engine; frame intervals while panning and zooming | `app/e2e/timeline-perf.spec.ts` [M4 ✅] |
-| UI at production scale | A generated 260-file, 2-session production through the real app: background import with live counts, pause/resume, quit mid-analysis and resume, errors and retry, windowed browser, search, bulk actions, results, duplicates, removal, offline and relink | `app/e2e/production.spec.ts` [1.1 ✅] |
+| UI at production scale | A generated 279-file, 2-session production through the real app: background import with live counts, pause/resume, quit mid-analysis and resume, errors and retry, windowed browser, search, bulk actions, results, duplicates, removal, offline and relink | `app/e2e/production.spec.ts` [1.1 ✅] |
 | Scale and accuracy | Database at 5k/10k media, 50k analysis and 100k transcript rows; a 4,238-file production end to end (time, memory, processor, disk; every placement scored against the truth); offsets and conditions accuracy matrix | `mcsync.testing.dbbench` · `.stress` · `.accuracy`, reported in `SCALABILITY_TEST_REPORT.md` [1.1 ✅] |
 | Installed app | Install, e2e, uninstall, reinstall on Windows and both Mac architectures | `.github/workflows/release.yml` [1.1 ✅] |
 | Benchmarks | `scripts/benchmark_sync.py`; regressions tracked per release | M1 ✅ |

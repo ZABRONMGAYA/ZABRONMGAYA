@@ -9,13 +9,21 @@ clips without audio, damaged files, byte-identical copies, clips from an unrelat
 ``generate_production(root, ProductionPlan())`` writes 4,000 camera clips and 200 recorder files (plus the problem
 files) and returns the truth: for every file, its session, the scene time it starts at, and what a correct
 synchroniser should conclude about it.
+
+    python -m mcsync.testing.production OUT_DIR [--sessions 20 --cameras 8 --clips-per-camera 25 ...]
+
+writes the same production from the command line (the one SCALABILITY_TEST_REPORT.md was measured on, with the
+defaults) for :mod:`mcsync.testing.stress`.
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import shutil
+import sys
+import time
 import zlib
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict, dataclass, field
@@ -372,3 +380,37 @@ def evaluate(prod: Production, index: dict, *, tolerance_s: float = 0.02) -> dic
         "sessions": prod.plan.sessions,
         "wrong": wrong[:50],
     }
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description="Write a generated production with known truth.")
+    ap.add_argument("out", type=Path, help="production folder (files that already exist are kept)")
+    defaults = ProductionPlan()
+    ap.add_argument("--sessions", type=int, default=defaults.sessions)
+    ap.add_argument("--cameras", type=int, default=defaults.cameras, help="per session")
+    ap.add_argument("--clips-per-camera", type=int, default=defaults.clips_per_camera)
+    ap.add_argument("--recorders", type=int, default=defaults.recorders, help="per session")
+    ap.add_argument("--files-per-recorder", type=int, default=defaults.files_per_recorder)
+    ap.add_argument("--seed", type=int, default=defaults.seed)
+    ap.add_argument("--workers", type=int, default=None)
+    args = ap.parse_args(argv)
+    plan = ProductionPlan(
+        sessions=args.sessions,
+        cameras=args.cameras,
+        clips_per_camera=args.clips_per_camera,
+        recorders=args.recorders,
+        files_per_recorder=args.files_per_recorder,
+        seed=args.seed,
+    )
+    t0 = time.monotonic()
+
+    def progress(done: int, total: int) -> None:
+        print(f"{done}/{total} files, {time.monotonic() - t0:.0f} s", file=sys.stderr, flush=True)
+
+    prod = generate_production(args.out, plan, workers=args.workers, progress=progress)
+    print(f"{len(prod.files)} files in {time.monotonic() - t0:.0f} s: {args.out}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

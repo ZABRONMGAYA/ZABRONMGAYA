@@ -92,7 +92,8 @@ test("pans and zooms a 300-clip timeline smoothly", async () => {
     path.join(work, "Benchmark.mcsync"),
   );
   await page.getByTestId("open-project").click();
-  await expect(page.getByTestId("sync-stats")).toContainText("301 clips");
+  await expect(page.getByTestId("media-summary")).toContainText("301 clips");
+  await page.getByTestId("stage-timeline").click();
   await expect(page.getByTestId("clip-ZOOM0001.WAV")).toBeAttached();
   const drawn = () => page.evaluate(() => window.mcsyncTimeline?.stats() ?? { clips: 0, waveforms: 0 });
   await expect.poll(async () => (await drawn()).waveforms).toBe(301); // every waveform file has loaded

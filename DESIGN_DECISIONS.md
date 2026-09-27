@@ -120,7 +120,7 @@ counts per kind of work, and the choices Later, Restart or Resume.
 
 - `app/e2e/app.spec.ts` covers the editor workflow: home, import, search, sync, timeline, drag / undo, snap, reject,
   export, reopen.
-- `app/e2e/production.spec.ts` covers a 260-file production: background import, pause, quit and resume, errors,
+- `app/e2e/production.spec.ts` covers a 279-file production: background import, pause, quit and resume, errors,
   windowed browser, search, results, duplicates, removal, offline and relink.
 - Both suites run in CI on Windows, macOS and Linux, and against the installed app before each release.
 - Visual QA against the S-frames was done by eye at 1440 × 900 only. The 1280 / 1920 / 2560 checks and a

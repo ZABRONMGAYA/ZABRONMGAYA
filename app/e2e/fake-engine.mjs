@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // A stand-in engine for UI benchmarks: a synthetic 3-hour project with a recorder and 300 camera clips on
 // 12 devices, answered instantly, with waveform files written to MCSYNC_CACHE_DIR like the real engine's.
+// It speaks the engine protocol (version 2) for what opening a project and showing its timeline need.
 import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
@@ -131,13 +132,75 @@ const summary = () => ({
   offline: 0,
   devices: devices.length,
   last_run: 1,
+  resume: null,
+  paused: false,
+});
+
+const INDEX_COLUMNS = [
+  "clip_id", "name", "kind", "device_id", "device_name", "device_kind", "session_id", "duration_s", "fps", "width",
+  "height", "codec", "sample_rate", "channels", "timecode", "creation_time", "size_bytes", "media_status",
+  "duplicate_of", "duplicate_decision", "probe", "analysis", "sync_status", "confidence", "method", "start_s", "group",
+  "category", "path",
+]; // prettier-ignore
+const indexRows = timelineClips.map((c) => {
+  const row = {
+    clip_id: c.clip_id,
+    name: c.name,
+    kind: c.has_video ? "video" : "audio",
+    device_id: c.device_id,
+    device_name: c.device_name,
+    device_kind: c.kind,
+    session_id: 1,
+    duration_s: c.duration_s,
+    fps: c.frame_rate,
+    width: c.has_video ? 3840 : null,
+    height: c.has_video ? 2160 : null,
+    codec: c.has_video ? "h264" : "pcm_s24le",
+    sample_rate: 48000,
+    channels: 2,
+    timecode: null,
+    creation_time: null,
+    size_bytes: Math.round(c.duration_s * 12_500_000),
+    media_status: "online",
+    duplicate_of: null,
+    duplicate_decision: null,
+    probe: "done",
+    analysis: "done",
+    sync_status: c.status,
+    confidence: c.confidence,
+    method: c.method,
+    start_s: c.start_s,
+    group: 0,
+    category: c.status === "needs_review" ? "review" : "synchronized",
+    path: c.path,
+  };
+  return INDEX_COLUMNS.map((k) => row[k]);
+});
+const session = {
+  id: 1,
+  label: "Session 1",
+  start_at: null,
+  end_at: null,
+  group_no: 0,
+  source: "auto",
+  clips: clips.length,
+};
+const noCounts = () => ({ pending: 0, running: 0, done: 0, failed: 0, skipped: 0, cancelled: 0, rate_per_min: null });
+const categories = (review) => ({
+  synchronized: clips.length - review,
+  high_confidence: clips.length - review,
+  review,
+  manual: 0,
+  failed: 0,
+  skipped: 0,
+  pending: 0,
 });
 
 const handlers = {
   "engine.hello": () => ({
     name: "fake-engine",
     version: "bench",
-    protocol: 1,
+    protocol: 2,
     ffmpeg: "ffmpeg version bench",
     cache_dir: cacheDir,
     workers: 1,
@@ -170,6 +233,43 @@ const handlers = {
       audio_channel: null,
       chapter: null,
     })),
+  }),
+  "media.index": () => ({
+    columns: INDEX_COLUMNS,
+    rows: indexRows,
+    devices: devices.map((d) => ({
+      ...d,
+      make: null,
+      model: null,
+      serial: null,
+      color: null,
+      clips: clips.filter((c) => c.device_id === d.id).length,
+    })),
+    sessions: [session],
+    version: 1,
+  }),
+  "media.offline": () => ({ volumes: [] }),
+  "media.thumbnails": () => ({ thumbnails: [] }),
+  "pipeline.status": () => ({
+    state: "idle",
+    error: null,
+    discovery: { total: clips.length, by_kind: {}, by_status: { done: clips.length }, walking: false },
+    stages: { probe: noCounts(), analyze: noCounts(), match: noCounts(), extend: noCounts() },
+    sync: null,
+    aux: null,
+    running: [],
+    workers: { probe: 1, analyze: 1, match: 1 },
+    activity: [],
+  }),
+  "sync.summary": () => ({
+    clips: clips.length,
+    unreadable_files: 0,
+    counts: categories(timeline.stats.needs_review),
+    sources: [],
+    sessions: [session],
+    run: null,
+    last_run: 1,
+    threshold: 0.85,
   }),
   "timeline.get": () => timeline,
   "sync.matches": () => [],
