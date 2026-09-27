@@ -8,6 +8,12 @@ confirmed any of these decisions yet.
 
 Screenshots come from the end-to-end suites (`app/e2e`), taken at 1440 × 900 in the dark theme.
 
+| Home (S01) | Analysis (S05), paused |
+|---|---|
+| ![Home](docs/images/home.png) | ![Analysis](docs/images/analysis.png) |
+| **Results (S08)** | **Timeline (S11)** |
+| ![Results](docs/images/results.png) | ![Timeline](docs/images/timeline.png) |
+
 ## Foundations
 
 | Area | As implemented |

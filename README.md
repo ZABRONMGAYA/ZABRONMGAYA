@@ -27,6 +27,8 @@ Version 1.1 processes a production as a background pipeline:
 Every step is a task in the project file, so work can be paused, resumed, cancelled, retried or picked up after
 a quit or crash. The media browser shows only what is on screen, whatever the project size.
 
+![Analysis of a production, paused: progress by stage with counts, never time estimates](docs/images/analysis.png)
+
 What has been measured, on what hardware and with what results, is in
 [SCALABILITY_TEST_REPORT.md](SCALABILITY_TEST_REPORT.md). It includes an end-to-end run of a generated
 4,238-file production: 4,000 camera clips, 200 recorder files, and problem files.

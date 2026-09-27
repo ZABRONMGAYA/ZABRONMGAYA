@@ -577,7 +577,10 @@ function Results() {
           <span>Status</span>
         </div>
         {summary.sources.map((s) => {
-          const conf = s.median_confidence;
+          // Nothing of this source could be placed by audio: its clips wait for manual sync. Their clock-only
+          // estimate is not a sync confidence, so none is shown.
+          const manualOnly = s.counts.synchronized === 0 && s.counts.review === 0 && s.counts.manual > 0;
+          const conf = manualOnly ? null : s.median_confidence;
           const status = conf === null ? "none" : statusFor(s.min_confidence ?? conf, threshold);
           const attention = s.counts.review + s.counts.manual + s.counts.failed;
           const l = s.device_id !== null ? letters.get(s.device_id) : undefined;
@@ -616,9 +619,9 @@ function Results() {
               <span>
                 <SyncBadge
                   status={status === "none" ? "none" : status}
-                  confidence={s.min_confidence}
+                  confidence={manualOnly ? undefined : s.min_confidence}
                   size="md"
-                  label={status === "review" ? "Review recommended" : undefined}
+                  label={manualOnly ? "Manual sync required" : status === "review" ? "Review recommended" : undefined}
                 />
               </span>
             </div>
