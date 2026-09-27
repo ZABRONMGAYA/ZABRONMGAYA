@@ -8,6 +8,8 @@ import path from "node:path";
 
 import { type ElectronApplication, type Page, _electron as electron, expect, test } from "@playwright/test";
 
+import { closeApp, printEngineLog } from "./helpers";
+
 const appDir = path.resolve(import.meta.dirname, "..");
 const python = process.env.MCSYNC_PYTHON ?? (process.platform === "win32" ? "python" : "python3");
 const screens = path.join(appDir, "test-results", "screens");
@@ -82,12 +84,13 @@ test.beforeAll(() => {
 
 test.afterEach(async ({}, testInfo) => {
   if (testInfo.status !== testInfo.expectedStatus && page) {
+    printEngineLog(path.join(work, "user-data"), `"${testInfo.title}" failed`);
     await page.screenshot({ path: testInfo.outputPath("failure.png") }).catch(() => undefined);
   }
 });
 
 test.afterAll(async () => {
-  await app?.close();
+  if (app) await closeApp(app, path.join(work, "user-data")).catch(() => undefined);
   fs.rmSync(work, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 });
 });
 
@@ -120,7 +123,7 @@ test("quits in the middle of the analysis and resumes on reopen", async () => {
   await expect(page.getByTestId("selection-bar")).toContainText("selected");
   await page.getByTestId("bulk-analyze").click();
   await expect(page.getByTestId("toast-info").last()).toContainText("Queued");
-  await app.close();
+  await closeApp(app, path.join(work, "user-data"));
   await launch();
   await page.getByRole("button", { name: "Festival" }).click();
   await expect(page.getByTestId("resume-dialog")).toBeVisible();
@@ -202,7 +205,7 @@ test("removes clips from the project without touching the files", async () => {
 });
 
 test("shows offline media and relinks a moved card", async () => {
-  await app.close();
+  await closeApp(app, path.join(work, "user-data"));
   const card = path.join(root, "CARDS", "S00_CAMB");
   const moved = path.join(work, "RELOCATED", "S00_CAMB");
   fs.mkdirSync(path.dirname(moved), { recursive: true });

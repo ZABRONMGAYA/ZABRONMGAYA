@@ -7,6 +7,8 @@ import path from "node:path";
 
 import { type ElectronApplication, type Page, _electron as electron, expect, test } from "@playwright/test";
 
+import { closeApp, printEngineLog } from "./helpers";
+
 const appDir = path.resolve(import.meta.dirname, "..");
 const python = process.env.MCSYNC_PYTHON ?? (process.platform === "win32" ? "python" : "python3");
 const screens = path.join(appDir, "test-results", "screens");
@@ -85,12 +87,13 @@ test.beforeAll(() => {
 // A failing step leaves a picture of the window (error toasts included) in test-results.
 test.afterEach(async ({}, testInfo) => {
   if (testInfo.status !== testInfo.expectedStatus && page) {
+    printEngineLog(path.join(work, "user-data"), `"${testInfo.title}" failed`);
     await page.screenshot({ path: testInfo.outputPath("failure.png") }).catch(() => undefined);
   }
 });
 
 test.afterAll(async () => {
-  await app?.close();
+  if (app) await closeApp(app, path.join(work, "user-data")).catch(() => undefined);
   // Windows may hold the project file open for a moment after the engine exits.
   fs.rmSync(work, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 });
 });
@@ -244,7 +247,7 @@ test("exports the timeline for Premiere Pro and Resolve", async () => {
 
 test("reopens the project with its timeline", async () => {
   const start = await startOf("A002.MOV");
-  await app.close();
+  await closeApp(app, path.join(work, "user-data"));
   await launch();
   await expect(page.getByTestId("welcome")).toContainText("Smith");
   await page.getByRole("button", { name: "Smith" }).click();

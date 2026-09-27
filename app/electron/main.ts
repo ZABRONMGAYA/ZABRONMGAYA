@@ -230,6 +230,7 @@ app.whenReady().then(async () => {
   window.on("closed", () => {
     window = null;
   });
+  engine.logTo(path.join(app.getPath("userData"), "logs", "engine.log"));
   try {
     await engine.start();
   } catch {

@@ -1,6 +1,7 @@
 // Supervises the Python engine child process and speaks JSON-RPC to it over stdio.
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
+import fs from "node:fs";
 import path from "node:path";
 
 import { type EngineStatus, type Hello, PROTOCOL_VERSION, type RpcFailure } from "../src/api/contract";
@@ -41,6 +42,7 @@ export class RpcError extends Error implements RpcFailure {
 }
 
 const ENGINE_GONE = -32099;
+const LOG_LIMIT_BYTES = 5 * 2 ** 20;
 const TIMEOUT = -32098;
 
 interface Pending {
@@ -58,9 +60,22 @@ export class EngineProcess extends EventEmitter {
   private restarts = 0;
   readonly stderrTail: string[] = [];
   status: EngineStatus = { state: "stopped", hello: null, error: null };
+  private log: fs.WriteStream | null = null;
 
   constructor(private readonly command: () => EngineCommand) {
     super();
+  }
+
+  /** Keep the engine's diagnostic output (its stderr) in a file as well, for bug reports. Started afresh when large. */
+  logTo(file: string): void {
+    try {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      const large = fs.existsSync(file) && fs.statSync(file).size > LOG_LIMIT_BYTES;
+      this.log = fs.createWriteStream(file, { flags: large ? "w" : "a" });
+      this.log.on("error", () => (this.log = null));
+    } catch {
+      this.log = null; // diagnostics only: never stop the app over them
+    }
   }
 
   private setStatus(status: EngineStatus): void {
@@ -74,10 +89,12 @@ export class EngineProcess extends EventEmitter {
     const { command, args, env } = this.command();
     const child = spawn(command, args, { env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
     this.child = child;
+    this.log?.write(`--- engine started ${new Date().toISOString()} (pid ${child.pid ?? "?"})\n`);
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => this.onData(chunk));
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk: string) => {
+      this.log?.write(chunk);
       this.stderrTail.push(...chunk.split("\n").filter(Boolean));
       this.stderrTail.splice(0, Math.max(0, this.stderrTail.length - 200));
     });
@@ -126,6 +143,7 @@ export class EngineProcess extends EventEmitter {
 
   private onExit(code: number | null, error: string | null): void {
     if (!this.child) return;
+    this.log?.write(`--- engine exited ${new Date().toISOString()}: ${error ?? `code ${code}`}\n`);
     this.child = null;
     for (const [, p] of this.pending) {
       clearTimeout(p.timer);
@@ -163,12 +181,18 @@ export class EngineProcess extends EventEmitter {
     if (!child) return;
     this.stopping = true;
     const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+    this.log?.write(`--- stopping the engine ${new Date().toISOString()}\n`);
     try {
       await this.request("engine.shutdown", {}, 15_000);
-    } catch {
+      this.log?.write(`--- engine shut down ${new Date().toISOString()}\n`);
+    } catch (err) {
       // already gone or unresponsive: killed below
+      this.log?.write(`--- engine.shutdown: ${err instanceof Error ? err.message : String(err)}\n`);
     }
-    const timer = setTimeout(() => child.kill(), 15_000);
+    const timer = setTimeout(() => {
+      this.log?.write(`--- engine still running after 15 s: killed ${new Date().toISOString()}\n`);
+      child.kill();
+    }, 15_000);
     await exited;
     clearTimeout(timer);
   }
