@@ -8,7 +8,8 @@ media is never re-encoded, modified or deleted.
 Built for wedding filmmakers, event videographers, documentary producers and multicam editors: hours of recorder
 audio, hundreds or thousands of interrupted camera clips, mixed frame rates, drifting clocks.
 
-**Stack:** Python (NumPy, SciPy) engine · FFmpeg · SQLite · Electron + React desktop app.
+**Stack:** Python (NumPy, SciPy) engine · FFmpeg · SQLite · sherpa-onnx (Whisper, Silero, 3D-Speaker) · Electron +
+React desktop app.
 
 ![Sync results for a generated production](docs/images/results.png)
 
@@ -33,17 +34,37 @@ What has been measured, on what hardware and with what results, is in
 [SCALABILITY_TEST_REPORT.md](SCALABILITY_TEST_REPORT.md). It includes an end-to-end run of a generated
 4,238-file production: 4,000 camera clips, 200 recorder files, and problem files.
 
-Not in this version: transcription, speaker and marker analysis, and AI (visual or speech) sync. Clips that audio
-cannot place go to an extended audio search, then to manual sync ([DESIGN_DECISIONS.md](DESIGN_DECISIONS.md) D-08).
+## Transcripts, speakers and AI sync
+
+Version 1.2 adds the Analyze stage. Everything runs on your computer with models that ship in the installer; nothing
+is uploaded.
+
+* **Transcription** (Whisper): what was said, in 99 languages, detected per sentence. "Transcribe project"
+  transcribes each moment once, from its clearest recording (audio recorders first). Cameras synced to that
+  recording show its transcript at the same moment.
+* **Speakers:** voices are told apart across every recording. Rename a speaker once and every line follows; merge
+  two speakers by dragging one onto the other.
+* **Markers:** applause, music, laughter, cheering and singing are marked while transcribing. Press **M** to mark a
+  moment yourself.
+* **Search** (⌘K / Ctrl+K): a phrase someone said, a speaker's name, a marker or a clip name. ↵ opens the moment in
+  the player; ⌘↵ marks it.
+* **AI sync:** a clip audio fingerprints could not place is looked for by the sentences heard in both recordings,
+  the flashes and light changes both cameras saw, its audio compared again at close range, and the camera clocks.
+  The evidence is shown lane by lane; a proposal is placed only when you accept it (and Undo takes it back). With
+  **Settings → Synchronization → AI visual + speech fallback**, this runs after every sync and proposes clips for
+  review.
+
+The larger speech models (Whisper small and turbo) download on demand from Settings → AI. From the command line:
+`mcsync transcribe recording.wav`.
 
 ## Installing
 
 Installers for Windows 10/11 (64-bit) and macOS 12+ (Apple Silicon and Intel) are built and tested by the
 [release workflow](.github/workflows/release.yml):
 
-* `Syncora-Setup-1.1.1.exe`
-* `Syncora-1.1.1-macOS-arm64.dmg`
-* `Syncora-1.1.1-macOS-x64.dmg`
+* `Syncora-Setup-1.2.0.exe`
+* `Syncora-1.2.0-macOS-arm64.dmg`
+* `Syncora-1.2.0-macOS-x64.dmg`
 
 Download them from the repository's Releases page, or from the workflow run's artifacts.
 
@@ -73,12 +94,16 @@ Projects are `.syncora` files. Projects from Multicam Sync (`.mcsync`) open and 
 ```bash
 cd engine
 python -m pip install -e ".[dev]"
+python scripts/fetch_models.py        # the speech models into engine/models (transcription tests, the app)
 python -m pytest -m "not slow"        # unit, synthetic-offset, pipeline and end-to-end tests
 python -m pytest -m slow              # hour-long recordings with clock drift
 python scripts/benchmark_sync.py      # speed on 10 min / 1 h / 3 h references
 
 # Synchronise real footage from the command line (needs FFmpeg on PATH)
 mcsync sync /path/to/card_dumps --project wedding.syncora --jam-synced
+
+# What is said in a recording, with speakers, on this computer
+mcsync transcribe ZOOM0001.WAV --language en
 
 # Write the timeline for Premiere Pro / Resolve (.xml) or Resolve / Final Cut Pro (.fcpxml)
 mcsync export wedding.syncora wedding.xml
@@ -109,6 +134,7 @@ Needs Node.js 22.12 or newer, Python 3.11 or newer, and FFmpeg on `PATH`.
 
 ```bash
 python -m pip install -e engine           # the app runs the engine from source during development
+python engine/scripts/fetch_models.py     # the speech models (Analyze stage)
 cd app
 npm ci
 npm start                                 # build and launch

@@ -49,7 +49,10 @@ if ($Action -eq "install") {
   if ($entry.DisplayVersion -ne $version) { throw "installed version $($entry.DisplayVersion), expected $version" }
   $dir = Split-Path (Get-Uninstaller $entry).Path
   $exe = Join-Path $dir "Syncora.exe"
-  foreach ($f in @($exe, (Join-Path $dir "resources\engine"), (Join-Path $dir "resources\ffmpeg"))) {
+  $models = Join-Path $dir "resources\models"
+  foreach ($f in @($exe, (Join-Path $dir "resources\engine"), (Join-Path $dir "resources\ffmpeg"),
+      (Join-Path $models "whisper-base\encoder.onnx"), (Join-Path $models "silero-vad"),
+      (Join-Path $models "voice-eres2net"))) {
     if (-not (Test-Path $f)) { throw "missing after install: $f" }
   }
   if (-not (Test-Path $shortcut)) { throw "no desktop shortcut at $shortcut" }

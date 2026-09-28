@@ -31,7 +31,9 @@ case "${1:-}" in
     cmp -s "$icns" build/icon.icns || { echo "$icns is not the Syncora icon" >&2; exit 1; }
     installed=$(/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" "$app/Contents/Info.plist")
     [ "$installed" = "$version" ] || { echo "installed version $installed, expected $version" >&2; exit 1; }
-    for f in "$app/Contents/MacOS/Syncora" "$app/Contents/Resources/engine" "$app/Contents/Resources/ffmpeg"; do
+    for f in "$app/Contents/MacOS/Syncora" "$app/Contents/Resources/engine" "$app/Contents/Resources/ffmpeg" \
+      "$app/Contents/Resources/models/whisper-base/encoder.onnx" "$app/Contents/Resources/models/silero-vad" \
+      "$app/Contents/Resources/models/voice-eres2net"; do
       [ -e "$f" ] || { echo "missing after install: $f" >&2; exit 1; }
     done
     codesign -dv "$app" 2>&1 | grep -E "^(Identifier|Signature|TeamIdentifier)=" || true

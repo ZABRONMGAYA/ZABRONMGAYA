@@ -33,6 +33,13 @@ jobs:
         run: '"$GITHUB_WORKSPACE/.github/scripts/install-ffmpeg.sh" xvfb'
       - name: Install the engine (the app runs it from source in development)
         run: python -m pip install -e ../engine
+      - name: Restore the AI models
+        uses: actions/cache@v4
+        with:
+          path: engine/models
+          key: models-dev-${{ hashFiles('engine/src/mcsync/ai/models.py') }}
+      - name: Fetch the AI models (the Analyze end-to-end suite)
+        run: python ../engine/scripts/fetch_models.py
       - run: npm ci
       - run: npx install-electron
       - run: npm run format:check

@@ -1,5 +1,52 @@
 # Changelog
 
+## 1.2.0
+
+Transcripts, speakers, search and AI sync, all on your computer; every screen and setting is active. Projects from
+1.1 open and are upgraded.
+
+### Fixed
+
+- **"Could not show the timeline" (Failed to execute 'roundRect'…).** A clip narrower than its outline, such as a
+  short clip at a low zoom, made the Timeline fail to draw. Clips of any width now draw.
+- **Footage wrongly shown as failed or skipped:**
+  - files that are not media (camera sidecars such as `.LRF`, `.THM`, `.XML`, LUTs, checksums) were listed as
+    failed; they are now left out;
+  - clips from cameras started together (same name, time and length) were skipped as duplicates; only files with
+    identical content are now left out, and look-alikes are kept until you decide;
+  - recordings without a frame rate or a duration in their header (some phones, screen recorders, cut-off files)
+    were rejected; they are now read to the end, and variable frame rates are handled;
+  - a recording cut off at the end (card full, battery) failed as a whole; everything before the damage is used;
+  - RAW video (`.R3D`, `.braw`, `.crm`, ARRIRAW, N-RAW) says why it cannot be decoded.
+- **The app icon was missing** in Windows (title bar, taskbar, desktop shortcut, the installer and uninstaller) and in
+  the macOS DMG. The installers now carry the Syncora icon and artwork.
+
+### Added
+
+- **Splash screen** while the engine starts (S00), with real start-up steps.
+- **Analyze stage (03):**
+  - Overview: transcription progress, speakers, moments, per-recording status, Redo and Cancel.
+  - Transcript (S09): the recording plays with captions, lines by speaker and language, a mini timeline with
+    markers, J K L, ⇧↑/⇧↓ and M; a language popover.
+  - Speakers: rename in place, merge by dragging.
+  - Markers: sound events heard while transcribing, and your own.
+  - Search (S10) with ⌘K: phrases, speakers, markers and clip names, with why each result matched.
+- **Transcription on this computer:** Whisper (base ships in the installer; tiny, small and turbo download on
+  demand), Silero voice activity detection and 3D-Speaker voice fingerprints, through sherpa-onnx. Recordings are
+  transcribed in 10-minute parts in the background pipeline, so long recordings show progress and survive a quit.
+- **AI sync (S07):** Find with AI (⇧A) from the Inspector, or "Find them with AI" on Sync results for every clip
+  audio could not place. Evidence lanes (speech, visual, audio at close range, clocks), candidates, preview side by
+  side, Accept and lock (undoable). Settings → Synchronization → AI visual + speech fallback runs it after each sync
+  and proposes placements for review, never locked.
+- **Settings:** AI (models, downloads, fallback), Transcription (model, language), Appearance (dark, light,
+  system), Media, Proxy, Export defaults, Keyboard shortcuts, Privacy and Updates.
+- `mcsync transcribe FILE` on the command line.
+
+### Changed
+
+- Project files move to schema version 3 (transcripts, speakers, markers); older projects are upgraded when opened.
+- The installers are about 200 MB larger: they include the speech, voice-activity and voice-fingerprint models.
+
 ## 1.1.1
 
 Fixes for the Timeline and faster editing on large projects. Projects from 1.1.0 open unchanged.

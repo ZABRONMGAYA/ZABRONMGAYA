@@ -38,14 +38,14 @@ Screenshots come from the end-to-end suites (`app/e2e`), taken at 1440 × 900 in
 | S04 Media browser | implemented | Windowed grid and list for thousands of clips, bins (cameras, groups, review, unmatched, offline, duplicates, failed), search grammar, multi-select and bulk actions. See D-05 and D-06. |
 | S05 Analysis | implemented | Stage progress list, source progress and activity. See D-07. |
 | S06 Sync workspace | not implemented | Review and manual sync take place in the timeline stage (04) instead: canvas timeline, review queue and inspector (drag, nudge, snap to audio, reject or restore a match, undo / redo). |
-| S07 AI sync | not implemented | No AI models ship in this version (D-08). |
+| S07 AI sync | implemented | Evidence lanes for the signals Syncora measures (audio at close range, speech, visual, metadata), candidates, result panel, preview side by side, accept, next candidate, manual sync. No "scene similarity" or "event matching" lanes: they are not measured (D-08). |
 | S08 Sync results | implemented | Header, category counts, review callout and a results table grouped by source. See D-07. |
-| S09 Transcript, S10 Search | not implemented | The Analyze tab (03) is disabled, with a tooltip that explains why (D-08). |
+| S09 Transcript, S10 Search | implemented | Analyze tab (03) with Overview, Transcript, Speakers, Markers and Search. Language tier chips are not shown: no per-language accuracy is measured (as the specification requires). Search covers transcripts, speakers, markers and clip names; there are no visual tags (D-08). |
 | S11 Multicam timeline | partial | The existing canvas timeline, restyled with tokens and kept separate from the production index so it stays fast. The track geometry and the marker, AI and transcript lanes of the timeline specification are not implemented. |
 | S12 Export | partial | Export is a dialog (format, frame rate, start timecode, handling of uncertain clips) plus a report of what was written. There is no full S12 screen and no export history. |
-| S13 Settings | implemented | General, Performance, Synchronization, Storage, About. See D-10. |
+| S13 Settings | implemented | Every category of the design. See D-10. |
 | S14 Onboarding | not implemented | |
-| S15 Empty states | partial | No projects yet, No media, and *n* clips offline (as a banner). The Timeline before the first sync: no media yet, not synchronised yet (with analysis progress and Sync all), or synchronising (with Show progress). A view that fails to render shows an error card with Try again instead of a blank window. A search with no results shows an empty browser with "0 clips" instead of the S15 card. Transcript, markers and AI empty states need features not in this version. |
+| S15 Empty states | partial | No projects yet, No media, and *n* clips offline (as a banner). The Timeline before the first sync: no media yet, not synchronised yet (with analysis progress and Sync all), or synchronising (with Show progress). A view that fails to render shows an error card with Try again instead of a blank window. A search with no results shows an empty browser with "0 clips" instead of the S15 card. No transcript, No markers, No results for "…" and No AI results follow S15. |
 | S16 Error states | partial | View errors dialog (per-file reason, Retry failed), offline banner with Relink (Find folder…), error toasts. |
 
 ## Decisions
@@ -88,13 +88,16 @@ Several words match as a phrase or as all words.
 The fourth row is labelled "Extended search", not "AI", so the screen does not claim analysis that does not happen.
 The results table shows "Manual sync required" for clips that no evidence could place.
 
-**D-08 AI features.** The design includes AI sync (S07), transcription, speakers, markers and semantic search. None of
-these ship in 1.1: there is no speech, vision or language model in the app. The interface says so rather than showing
-placeholders:
+**D-08 AI features.** Since 1.2, transcription, speakers, markers, search and AI sync run on the computer with
+models that ship in the installer (Whisper base, Silero VAD, 3D-Speaker ERes2Net, through sherpa-onnx); larger
+Whisper models download on demand. Where the design shows something Syncora does not measure, the interface leaves
+it out rather than showing a placeholder:
 
-- the Analyze tab is disabled;
-- Settings → Synchronization shows "AI visual + speech fallback" switched off and disabled, with an explanation;
-- the status bar never claims GPU or model use.
+- no language accuracy tiers (no per-language evaluation exists);
+- no "scene similarity", "event matching" or visual-tag search (no vision model ships);
+- AI sync results are proposals: accepted by the user (an undoable correction) or, with the automatic fallback,
+  shown as REVIEW; never locked automatically;
+- the status bar never claims GPU use (the models run on the processor).
 
 **D-09 Export compatibility copy (open #13).** Each format's description states only what the exporters' golden tests
 check (frame-accurate clip starts, sample-accurate recorder audio in the target). The accuracy line after an export is
@@ -104,14 +107,21 @@ computed from the exported timeline, not written by hand.
 pattern:
 
 - General: project files and resuming unfinished work.
+- Appearance: Dark, Light or System (light swaps the interface tokens; the timeline canvas stays dark).
 - Performance: Auto / Manual workers, with detected processors and memory.
+- AI: speech engine status, the models (included or downloaded, download and remove), the AI fallback.
+- Transcription: speech model, language, what always runs (speakers, sound events), Transcribe project.
+- Media, Proxy, Privacy, Updates: what Syncora does, in the SettingRow pattern (formats, RAW, sidecars, duplicates;
+  no proxies needed; nothing uploaded; installing a newer version).
+- Export: the export dialog's defaults (format, start timecode, clips to review).
+- Keyboard shortcuts: the list, with the platform's modifier names.
 - Storage: analysis cache location and size; Clear unused analysis.
 - About.
 
 About follows the app theme instead of the light Brand Kit drawing (open #12).
 
 The Synchronization method segmented control shows "1 Timecode · 2 Audio + clocks · 3 Audio only", mapped to the
-engine's modes; the design's "3 AI" has no engine behind it (D-08). The search-window select is replaced by the
+engine's modes; AI is not a mode of its own but a fallback for clips audio cannot place (its own switch, D-08). The search-window select is replaced by the
 fixed text "Whole production", because fingerprint candidates are found anywhere in the production (see
 `docs/SYNC_ENGINE.md`).
 

@@ -17,6 +17,19 @@ from pathlib import Path
 from mcsync.ai.models import ALL_MODELS, ModelStore
 
 
+def _printer():  # noqa: ANN202
+    """Download progress, printed every 10 %."""
+    last = [-1]
+
+    def progress(received: int, total: int) -> None:
+        pct = int(100 * received / total) if total else 0
+        if pct // 10 != last[0]:
+            last[0] = pct // 10
+            print(f"  {pct}%", flush=True)
+
+    return progress
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("dest", nargs="?", default=str(Path(__file__).resolve().parents[1] / "models"))
@@ -32,15 +45,7 @@ def main() -> int:
             print(f"{model_id}: already in {dest}")
             continue
         print(f"{model_id}: downloading {spec.download_bytes / 1e6:.0f} MB from {spec.url}", flush=True)
-        last = [-1]
-
-        def progress(received: int, total: int) -> None:
-            pct = int(100 * received / total) if total else 0
-            if pct // 10 != last[0]:
-                last[0] = pct // 10
-                print(f"  {pct}%", flush=True)
-
-        path = store.download(model_id, progress=progress)
+        path = store.download(model_id, progress=_printer())
         size = sum(f.stat().st_size for f in path.iterdir())
         print(f"{model_id}: installed in {path} ({size / 1e6:.0f} MB)")
     return 0

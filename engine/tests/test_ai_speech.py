@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 
@@ -156,3 +157,14 @@ def test_a_dialog_is_transcribed_with_its_speakers_and_found_by_search(service, 
     hits = service.search_query("father of the bride")["results"]
     assert hits[0]["clip_id"] == clip.id and hits[0]["score"] == 1.0 and hits[0]["speaker_name"] == "Peter"
     assert any(h["matched_by"] == ["speaker"] for h in service.search_query("Peter")["results"])
+
+
+@needs_models
+def test_the_command_line_transcribes_a_recording(tmp_path, capsys):
+    from mcsync.cli import main
+
+    assert main(["--cache-dir", str(tmp_path / "cache"), "transcribe", str(DIALOG), "--json"]) == 0
+    lines = json.loads(capsys.readouterr().out)
+    said = " ".join(r["text"] for r in lines if "text" in r).lower()
+    assert "happy couple" in said and "raise your glasses" in said
+    assert len({r["speaker"] for r in lines if "text" in r}) == 2

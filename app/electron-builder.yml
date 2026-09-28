@@ -1,6 +1,6 @@
 # Installers: Windows (NSIS, x64) and macOS (DMG, arm64 and x64), built by .github/workflows/release.yml.
-# The engine (PyInstaller, engine/packaging/build_engine.sh) and FFmpeg (engine/packaging/build_ffmpeg.sh) must be
-# built first, on the platform and architecture of the installer. Icons: node scripts/render-icons.mjs.
+# The engine (PyInstaller, engine/packaging/build_engine.sh, which also fetches the AI models into engine/dist/models)
+# and FFmpeg (engine/packaging/build_ffmpeg.sh) must be built first, on the platform and architecture of the installer. Icons: node scripts/render-icons.mjs.
 appId: app.syncora.desktop
 productName: Syncora
 copyright: Copyright © 2026 Syncora contributors
@@ -17,6 +17,8 @@ extraResources:
     to: engine
   - from: ../engine/dist/ffmpeg
     to: ffmpeg
+  - from: ../engine/dist/models # speech, voice activity and voice fingerprint models (scripts/fetch_models.py)
+    to: models
   - from: build/icon.png # the window's icon (title bar and taskbar on Windows)
     to: icon.png
 npmRebuild: false

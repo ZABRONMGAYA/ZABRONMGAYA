@@ -91,12 +91,15 @@ engine/src/mcsync/
 │                      thumbnail                                                                   [M2 ✅]
 ├── project/           schema.sql · migrations.py · db.py (project file, task queue, sessions,
 │                      duplicates, corrections log, pair matches)                                  [M3, 1.1 ✅]
-├── service/           rpc.py · jobs.py · app.py (all methods) · __main__.py            [M3 ✅]
+├── ai/                models.py (shipped and downloadable models) · speech.py (Silero VAD + Whisper + voice
+│                      fingerprints) · speakers.py · visual.py (brightness changes) · aisync.py (evidence,
+│                      candidates, confidence)                                                   [1.2 ✅]
+├── service/           rpc.py · jobs.py · app.py (all methods) · ai_methods.py · __main__.py   [M3, 1.2 ✅]
 ├── timeline.py        timeline model and review queue (UI and export)                  [M3 ✅]
 ├── serialize.py       JSON conversion for the project file and the protocol            [M3 ✅]
 ├── export/            sequence.py (NLE sequence, exact rational placement, report) ·
 │                      xmeml.py · fcpxml.py · urls.py                                   [M5 ✅]
-└── cli.py             `mcsync serve | probe | sync <folders> [--project]`             [M3 ✅]
+└── cli.py             `mcsync serve | probe | sync <folders> [--project] | export | transcribe`  [M3, 1.2 ✅]
 ```
 
 Dependencies point one way: `service → project, media, sync, export`; `sync` depends only on NumPy/SciPy and knows
@@ -185,7 +188,13 @@ integer ids.
 | `waveform.info` | `{clip_id}` → cache directory, peak files, rate, audio offset | The renderer then reads the peak files itself. |
 | `job.cancel` / `job.list` | `{job_id}` | Cooperative cancellation between files, chunks and pairs. |
 | `export.xml` | `{format: "xmeml"\|"fcpxml", path, sequence_rate?, start_timecode?, group?, include_uncertain?, name?}` → report | Writes atomically. The report gives per-clip placement errors as the format's readers see them, clips left out and why, and warnings. Every export is recorded in the project file. |
-| **Notifications** | `job.progress {job_id, kind, progress, message}` · `job.done {job_id, kind, result}` · `job.failed {job_id, kind, cancelled, error}` · `media.imported` · `media.analyzed` · `media.thumbnails` · `pipeline.progress` (status) · `pipeline.matches` · `pipeline.sync_finished` · `pipeline.error` | Progress throttled to 10 Hz (pipeline: 4 Hz). |
+| `ai.status` / `ai.download_model` / `ai.remove_model` | → engine, models, languages · `{model_id}` → `{job_id}` | Models shipped with the app or downloaded to the cache folder (1.2). |
+| `transcripts.start` / `.cancel` / `.overview`, `transcript.get` | `{scope: smart\|all\|clips, clip_ids?, redo?}` · `{clip_id}` → segments, state, markers | Transcription runs as `transcribe` tasks (10-minute parts) in the pipeline. A clip without its own transcript gets what its sync group's transcribed recordings heard (1.2). |
+| `speakers.list` / `.rename` / `.merge` | `{key, name}` · `{keys, into}` | Voices across the project (1.2). |
+| `markers.list` / `.add` / `.update` / `.delete` | `{clip_id, t_s, label?}` | Sound events heard while transcribing and markers added by hand (1.2). |
+| `search.query` | `{text, limit?}` → hits with `score` and `matched_by` | Phrase, all words or some words (FTS5), speaker names, markers, clip names (1.2). |
+| `ai.sync` / `.sync_result` / `.sync_accept` / `.sync_reject` / `ai.fallback` | `{clip_id, candidate?}` | AI sync: candidates from speech, visual, close-range audio and clock evidence; accepting adds an undoable offset correction (1.2). |
+| **Notifications** | `job.progress {job_id, kind, progress, message}` · `job.done {job_id, kind, result}` · `job.failed {job_id, kind, cancelled, error}` · `media.imported` · `media.analyzed` · `media.thumbnails` · `pipeline.progress` (status) · `pipeline.matches` · `pipeline.sync_finished` · `pipeline.error` · `transcript.updated {clip_ids}` · `ai.fallback_done {clips, placed}` | Progress throttled to 10 Hz (pipeline: 4 Hz). |
 
 Errors are JSON-RPC errors: −32700/−32600/−32601/−32602/−32603, plus −32000 no project open, −32001 busy (a
 conflicting job runs), −32002 application error, −32003 FFmpeg missing.

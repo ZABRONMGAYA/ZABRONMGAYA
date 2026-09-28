@@ -15,7 +15,10 @@ exe="dist/mcsync-engine/mcsync-engine"
 [ -f "$exe.exe" ] && exe="$exe.exe"
 "$exe" --version
 "$PYTHON" scripts/fetch_models.py dist/models
-# The frozen engine transcribes with the shipped models (the installer puts them next to it, as here).
-MCSYNC_MODELS_DIR="$PWD/dist/models" "$exe" --cache-dir build/check-cache transcribe tests/data/dialog.ogg \
+# The frozen engine transcribes with the shipped models (the installer puts them next to it, as here), with the
+# FFmpeg built for the app when there is one (packaging/build_ffmpeg.sh), else the one on PATH.
+here="$(pwd -W 2>/dev/null || pwd)" # a Windows path under Git Bash: the frozen engine is a Windows program
+[ -d dist/ffmpeg ] && export MCSYNC_FFMPEG_DIR="$here/dist/ffmpeg"
+MCSYNC_MODELS_DIR="$here/dist/models" "$exe" --cache-dir build/check-cache transcribe tests/data/dialog.ogg \
   | tee build/transcribe-check.txt
 grep -qi "happy couple" build/transcribe-check.txt
