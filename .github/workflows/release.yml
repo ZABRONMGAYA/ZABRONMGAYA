@@ -122,13 +122,22 @@ jobs:
             [ -n "$CSC_LINK" ] || unset CSC_LINK CSC_KEY_PASSWORD
             npx electron-builder --win nsis --x64 --publish never
           else
-            if [ -n "$CSC_LINK" ]; then
-              npx electron-builder --mac dmg --${{ matrix.arch }} --publish never
-            else
+            args=(--mac dmg --${{ matrix.arch }} --publish never)
+            if [ -z "$CSC_LINK" ]; then
               unset CSC_LINK CSC_KEY_PASSWORD
               export CSC_IDENTITY_AUTO_DISCOVERY=false
-              npx electron-builder --mac dmg --${{ matrix.arch }} --publish never -c.mac.identity=-
+              args+=(-c.mac.identity=-)
             fi
+            # hdiutil cannot always eject the DMG's temporary volume on the runners ("Resource busy", usually
+            # Spotlight indexing it): indexing is switched off, and the DMG is built again if that still happens.
+            sudo mdutil -a -i off > /dev/null 2>&1 || true
+            for attempt in 1 2 3; do
+              npx electron-builder "${args[@]}" && break
+              [ "$attempt" -lt 3 ] || exit 1
+              echo "::warning::Building the DMG failed (attempt $attempt); building it again"
+              hdiutil info
+              sleep 10
+            done
           fi
           ls -la release
 

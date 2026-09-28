@@ -44,37 +44,38 @@ async function sceneFrames(): Promise<Record<string, number | null>> {
   return Object.fromEntries(Object.entries(read).map(([k, v]) => [k, v && v.frame]));
 }
 
-/** Each camera window's scene frame and the master clock's time at the moment it was read (while playing, the
- * windows are read one after another: each is compared with the clock at its own reading). */
-async function sceneFramesAt(): Promise<Record<string, { frame: number; at: number } | null>> {
+/** Each camera window's scene frame, with the master clock's time when copying the pictures began (`from`) and
+ * when this window's picture had been copied (`to`). All pictures are copied first, then decoded. Whether a video's
+ * picture moves on while the page's script runs depends on the platform's compositor, so while playing a picture
+ * is compared with the clock over that span (logged: it is a few milliseconds on a computer with a GPU). */
+async function sceneFramesAt(): Promise<Record<string, { frame: number; from: number; to: number } | null>> {
   return page.evaluate(() => {
-    const out: Record<string, { frame: number; at: number } | null> = {};
-    const probe = document.createElement("canvas");
-    probe.width = 320;
-    probe.height = 180;
-    const ctx = probe.getContext("2d", { willReadFrequently: true })!;
+    const clock = window.mcsyncMulticam!.clock;
+    const copies: [string, CanvasRenderingContext2D, number][] = [];
+    const out: Record<string, { frame: number; from: number; to: number } | null> = {};
+    const from = clock.now();
     for (const tile of Array.from(document.querySelectorAll<HTMLElement>("[data-testid^=angle-]"))) {
       const name = tile.dataset.testid!.slice("angle-".length);
-      if (tile.dataset.view !== "media") {
-        out[name] = null;
-        continue;
-      }
+      out[name] = null;
+      if (tile.dataset.view !== "media") continue;
       const video = tile.querySelector("video")!;
       const canvas = tile.querySelector("canvas")!;
       const source = video.style.visibility !== "hidden" && video.videoWidth ? video : canvas.width > 0 ? canvas : null;
-      if (!source) {
-        out[name] = null;
-        continue;
-      }
-      ctx.clearRect(0, 0, 320, 180);
-      const at = window.mcsyncMulticam!.clock.now();
+      if (!source) continue;
+      const copy = document.createElement("canvas");
+      copy.width = 320;
+      copy.height = 180;
+      const ctx = copy.getContext("2d", { willReadFrequently: true })!;
       ctx.drawImage(source, 0, 0, 320, 180);
+      copies.push([name, ctx, clock.now()]);
+    }
+    for (const [name, ctx, to] of copies) {
       let n = 0;
       for (let k = 0; k < 16; k++) {
         const px = ctx.getImageData(Math.floor((k + 0.5) * 20), 20, 1, 1).data;
         if (px[0]! > 128) n |= 1 << k;
       }
-      out[name] = n === 0 ? null : { frame: n, at }; // black: no picture yet (scene frame 0 is never asked for)
+      out[name] = n === 0 ? null : { frame: n, from, to }; // black: no picture yet (scene frame 0 is never asked for)
     }
     return out;
   });
@@ -314,11 +315,17 @@ test("1-3 · plays every camera in sync, the ProRes camera through FFmpeg", asyn
   await page.getByTestId("play").click();
   const t1 = await clockNow();
   expect(t1 - master).toBeGreaterThan(1.5);
-  // While playing, every picture is within a few frames of the clock (the pictures a runner without a GPU
-  // composites lag by up to a refresh; paused, below, they must agree to the frame).
+  // While playing, every picture is within a few frames of the clock while it was copied (the pictures a runner
+  // without a GPU composites lag by up to a refresh; paused, below, they must agree to the frame).
+  const sceneFrame = (at: number) => Math.round((at - zoomAt + truth[ZOOM]!.start) * 25);
   const errors = Object.entries(moving)
-    .filter((e): e is [string, { frame: number; at: number }] => e[1] !== null)
-    .map(([name, v]) => [name, v.frame - Math.round((v.at - zoomAt + truth[ZOOM]!.start) * 25)] as const);
+    .filter((e): e is [string, { frame: number; from: number; to: number }] => e[1] !== null)
+    .map(([name, v]) => {
+      const [lo, hi] = [sceneFrame(v.from), sceneFrame(v.to)];
+      return [name, v.frame < lo ? v.frame - lo : v.frame > hi ? v.frame - hi : 0] as const;
+    });
+  const span = Math.max(...Object.values(moving).map((v) => (v ? v.to - v.from : 0)));
+  console.log("PLAYING", JSON.stringify({ errors, copy_ms: Math.round(span * 1000) }));
   expect(errors.length, JSON.stringify(moving)).toBeGreaterThanOrEqual(3);
   for (const [name, err] of errors)
     expect(Math.abs(err), `${name} while playing: ${JSON.stringify(errors)}`).toBeLessThanOrEqual(3);
