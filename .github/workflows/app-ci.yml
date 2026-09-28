@@ -2,9 +2,9 @@ name: app
 
 on:
   push:
-    paths: ["app/**", "engine/src/**", ".github/workflows/app-ci.yml"]
+    paths: ["app/**", "engine/src/**", ".github/workflows/app-ci.yml", ".github/scripts/install-ffmpeg.sh"]
   pull_request:
-    paths: ["app/**", "engine/src/**", ".github/workflows/app-ci.yml"]
+    paths: ["app/**", "engine/src/**", ".github/workflows/app-ci.yml", ".github/scripts/install-ffmpeg.sh"]
 
 jobs:
   test:
@@ -30,13 +30,7 @@ jobs:
           cache-dependency-path: app/package-lock.json
       - name: Install FFmpeg
         shell: bash
-        run: |
-          case "$RUNNER_OS" in
-            Linux) sudo apt-get update -q && sudo apt-get install -y -q ffmpeg xvfb ;;
-            macOS) brew install ffmpeg ;;
-            Windows) choco install ffmpeg -y --no-progress ;;
-          esac
-          ffmpeg -hide_banner -version | head -1
+        run: '"$GITHUB_WORKSPACE/.github/scripts/install-ffmpeg.sh" xvfb'
       - name: Install the engine (the app runs it from source in development)
         run: python -m pip install -e ../engine
       - run: npm ci

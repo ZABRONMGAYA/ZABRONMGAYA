@@ -16,6 +16,7 @@ on:
     branches: ["**"] # branches build only when packaging changes
     paths:
       - ".github/workflows/release.yml"
+      - ".github/scripts/install-ffmpeg.sh"
       - "engine/packaging/**"
       - "app/electron-builder.yml"
       - "app/scripts/installed-app.*"
@@ -127,11 +128,7 @@ jobs:
       # --- test the packaged app before shipping it
       - name: Install FFmpeg with encoders (to generate test footage)
         shell: bash
-        run: |
-          case "$RUNNER_OS" in
-            macOS) brew install ffmpeg ;;
-            Windows) choco install ffmpeg -y --no-progress ;;
-          esac
+        run: '"$GITHUB_WORKSPACE/.github/scripts/install-ffmpeg.sh"'
       - name: Install the app (Windows)
         if: runner.os == 'Windows'
         working-directory: app

@@ -2,9 +2,9 @@ name: engine
 
 on:
   push:
-    paths: ["engine/**", ".github/workflows/engine-ci.yml"]
+    paths: ["engine/**", ".github/workflows/engine-ci.yml", ".github/scripts/install-ffmpeg.sh"]
   pull_request:
-    paths: ["engine/**", ".github/workflows/engine-ci.yml"]
+    paths: ["engine/**", ".github/workflows/engine-ci.yml", ".github/scripts/install-ffmpeg.sh"]
   schedule:
     - cron: "17 3 * * *" # nightly: include the slow suite
 
@@ -28,13 +28,7 @@ jobs:
           cache-dependency-path: engine/pyproject.toml
       - name: Install FFmpeg
         shell: bash
-        run: |
-          case "$RUNNER_OS" in
-            Linux) sudo apt-get update -q && sudo apt-get install -y -q ffmpeg ;;
-            macOS) brew install ffmpeg ;;
-            Windows) choco install ffmpeg -y --no-progress ;;
-          esac
-          ffmpeg -hide_banner -version | head -1
+        run: '"$GITHUB_WORKSPACE/.github/scripts/install-ffmpeg.sh"'
       - run: python -m pip install -e ".[dev]"
       - run: ruff check src tests scripts
       - run: ruff format --check src tests scripts
