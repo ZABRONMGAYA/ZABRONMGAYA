@@ -7,7 +7,7 @@ import path from "node:path";
 
 import { type ElectronApplication, type Page, _electron as electron, expect, test } from "@playwright/test";
 
-import { closeApp, printEngineLog } from "./helpers";
+import { closeApp, mainWindow, printEngineLog } from "./helpers";
 
 const appDir = path.resolve(import.meta.dirname, "..");
 const python = process.env.MCSYNC_PYTHON ?? (process.platform === "win32" ? "python" : "python3");
@@ -42,7 +42,7 @@ async function launch(): Promise<void> {
       MCSYNC_USER_DATA: path.join(work, "user-data"),
     },
   });
-  page = await app.firstWindow();
+  page = await mainWindow(app);
   await page.setViewportSize({ width: 1440, height: 900 });
 }
 

@@ -5,6 +5,12 @@ import { defineConfig } from "vite";
 export default defineConfig({
   base: "./",
   plugins: [react()],
-  build: { outDir: "dist", emptyOutDir: true, sourcemap: true },
+  build: {
+    outDir: "dist",
+    emptyOutDir: true,
+    sourcemap: true,
+    // The app, and the S00 splash shown while the engine starts.
+    rollupOptions: { input: { main: "index.html", splash: "splash.html" } },
+  },
   test: { environment: "jsdom", include: ["tests/**/*.test.ts?(x)"] },
 });

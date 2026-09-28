@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
+    />
+    <title>Syncora</title>
+  </head>
+  <body>
+    <main class="splash" aria-busy="true">
+      <div class="splash__content">
+        <div class="splash__lockup" aria-label="Syncora">
+          <svg class="splash__symbol" viewBox="0 0 48 48" aria-hidden="true">
+            <rect class="bar" data-bar="0" x="12" y="7" width="26" height="6" />
+            <rect class="bar" data-bar="1" x="22" y="17" width="16" height="6" />
+            <rect class="bar" data-bar="2" x="6" y="27" width="32" height="6" />
+            <rect class="bar" data-bar="3" x="17" y="37" width="21" height="6" />
+            <rect class="line" x="38" y="2" width="5" height="44" />
+          </svg>
+          <span class="splash__wordmark">Syncora</span>
+        </div>
+        <p class="splash__tagline">AI-Powered Multicam Workflow</p>
+      </div>
+      <div class="splash__status" role="status">
+        <span id="status">Starting audio engine…</span>
+        <span id="percent" class="splash__percent">0%</span>
+      </div>
+      <div class="splash__track"><div id="fill" class="splash__fill"></div></div>
+      <footer class="splash__footer">
+        <span id="version"></span>
+        <span>Local processing: your media never leaves this computer</span>
+        <span class="splash__copyright">© 2026 Syncora</span>
+      </footer>
+    </main>
+    <script type="module" src="/src/splash/splash.ts"></script>
+  </body>
+</html>

@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { type ElectronApplication, type Page, _electron as electron, expect, test } from "@playwright/test";
+import { mainWindow } from "./helpers";
 
 const appDir = path.resolve(import.meta.dirname, "..");
 const fakeEngine = path.join(appDir, "e2e", "fake-engine.mjs");
@@ -30,7 +31,7 @@ test.beforeAll(async () => {
       MCSYNC_USER_DATA: path.join(work, "user-data"),
     },
   });
-  page = await app.firstWindow();
+  page = await mainWindow(app);
   await page.setViewportSize({ width: 1440, height: 900 });
   fs.mkdirSync(screens, { recursive: true });
 });

@@ -3,7 +3,24 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
-import type { ElectronApplication } from "@playwright/test";
+import type { ElectronApplication, Page } from "@playwright/test";
+
+/**
+ * The app's main window. The S00 splash opens alongside it while the engine starts and may load first, so the
+ * first window is not necessarily the main one.
+ */
+export async function mainWindow(app: ElectronApplication, timeoutMs = 60_000): Promise<Page> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    for (const page of app.windows()) {
+      if (page.isClosed()) continue;
+      await page.waitForLoadState("domcontentloaded").catch(() => undefined);
+      if (!page.isClosed() && page.url() !== "about:blank" && !page.url().includes("splash.html")) return page;
+    }
+    await app.waitForEvent("window", { timeout: 500 }).catch(() => undefined);
+  }
+  throw new Error("the main window did not open");
+}
 
 /** The last lines of the engine log the app keeps in its user-data folder (MCSYNC_USER_DATA). */
 export function engineLog(userData: string, lines = 120): string {

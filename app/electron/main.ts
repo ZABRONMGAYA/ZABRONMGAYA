@@ -73,7 +73,7 @@ function createWindow(): BrowserWindow {
       spellcheck: false,
     },
   });
-  win.once("ready-to-show", () => win.show());
+  // Shown by `startUp` once the engine and the interface are ready (the splash covers the wait).
   // The renderer is a local app: no navigation away from it, links open in the browser.
   win.webContents.on("will-navigate", (e) => e.preventDefault());
   // A renderer that crashed or was killed (for example out of memory) is reloaded instead of leaving an empty
@@ -95,6 +95,87 @@ function createWindow(): BrowserWindow {
   if (process.env.MCSYNC_RENDERER_URL) void win.loadURL(process.env.MCSYNC_RENDERER_URL);
   else void win.loadFile(path.join(here, "..", "dist", "index.html"));
   return win;
+}
+
+/** S00 splash: 960 × 560, frameless, shown while the engine starts and the interface loads. */
+function createSplash(): BrowserWindow {
+  const win = new BrowserWindow({
+    width: 960,
+    height: 560,
+    frame: false,
+    resizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    center: true,
+    show: false,
+    backgroundColor: "#201e1d",
+    title: "Syncora",
+    icon: windowIcon(),
+    webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false },
+  });
+  win.once("ready-to-show", () => win.show());
+  win.webContents.on("will-navigate", (e) => e.preventDefault());
+  const query = { version: app.getVersion() };
+  if (process.env.MCSYNC_RENDERER_URL)
+    void win.loadURL(`${process.env.MCSYNC_RENDERER_URL}/splash.html?${new URLSearchParams(query)}`);
+  else void win.loadFile(path.join(here, "..", "dist", "splash.html"), { query });
+  return win;
+}
+
+/** The logo reveal (Motion Specification §1) plays once, in full, and holds briefly before the splash closes. */
+const LOGO_REVEAL_MS = 2400;
+const LOGO_HOLD_MS = 400;
+
+/**
+ * Starts the engine behind the splash, reporting each real step, then swaps the splash for the main window. The
+ * main window exists (hidden) from the start, so the interface loads in parallel.
+ */
+async function startUp(main: BrowserWindow, splash: BrowserWindow | null): Promise<void> {
+  const loaded = splash
+    ? new Promise<void>((resolve) => {
+        splash.webContents.once("did-finish-load", () => resolve());
+        splash.once("closed", () => resolve());
+      })
+    : Promise.resolve();
+  const step = async (text: string, percent: number, failed = false) => {
+    await loaded;
+    if (!splash || splash.isDestroyed()) return;
+    await splash.webContents
+      .executeJavaScript(`window.splashStep(${JSON.stringify({ text, percent, failed })})`)
+      .catch(() => undefined);
+  };
+  const interfaceReady = new Promise<void>((resolve) => main.once("ready-to-show", () => resolve()));
+  const revealStarted = loaded.then(() => Date.now()); // the animation starts with the page
+  try {
+    void step("Starting audio engine…", 6);
+    let hello: Awaited<ReturnType<EngineProcess["start"]>> | null = null;
+    try {
+      hello = await engine.start();
+    } catch {
+      // The status (with the engine's error output) is shown in the main window's status bar.
+    }
+    if (hello) {
+      const ffmpeg = hello.ffmpeg?.match(/ffmpeg version (\S+)/)?.[1];
+      await step(ffmpeg ? `Loading codecs: FFmpeg ${ffmpeg}…` : "Loading codecs…", 30);
+      const machine = hello.plan?.reason;
+      await step(machine ? `Checking processors and memory: ${machine}…` : "Checking processors and memory…", 50);
+      await step("Loading sync and speech models…", 65);
+      await engine.request("ai.status", {}, 60_000).catch(() => undefined); // problems show in the Analyze stage
+    } else {
+      await step("The audio engine did not start. The status bar shows why.", 65, true);
+    }
+    await step("Restoring workspace…", 85);
+    await Promise.race([interfaceReady, new Promise((r) => setTimeout(r, 30_000))]);
+    await step("Ready.", 100);
+    const hold = splash ? (await revealStarted) + LOGO_REVEAL_MS + LOGO_HOLD_MS - Date.now() : 0;
+    await new Promise((r) => setTimeout(r, Math.max(0, hold)));
+  } catch (err) {
+    engine.note(`start-up: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
+  } finally {
+    // Whatever happened above, the app is usable: its window shows the engine's state.
+    if (!main.isDestroyed()) main.show();
+    if (splash && !splash.isDestroyed()) splash.close();
+  }
 }
 
 function menuCommand(command: MenuCommand) {
@@ -248,16 +329,14 @@ function registerIpc(): void {
 app.whenReady().then(async () => {
   registerIpc();
   buildMenu();
+  // The main window first (tests and the renderer address it as the app's first window), then the splash.
   window = createWindow();
   window.on("closed", () => {
     window = null;
   });
+  const splash = process.env.MCSYNC_NO_SPLASH === "1" ? null : createSplash();
   engine.logTo(path.join(app.getPath("userData"), "logs", "engine.log"));
-  try {
-    await engine.start();
-  } catch {
-    // Status (with the engine's error output) has been sent to the renderer.
-  }
+  await startUp(window, splash);
 });
 
 // An uncaught error in this process would otherwise open Electron's modal error box, which stops the event loop
