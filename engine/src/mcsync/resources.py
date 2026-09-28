@@ -168,6 +168,20 @@ def safe_process_workers(requested: int | None = None, platform: str | None = No
     return int(max(1, min(int(wanted), max_process_workers(platform))))
 
 
+def matcher_limit(res: Resources | None = None) -> tuple[int, str]:
+    """The most matching processes worth starting on this computer, and why: one per usable core (matching is
+    processor-bound: more processes only cost memory and start-up time), what memory allows, and the platform's
+    process pool limit (61 on Windows)."""
+    res = res or detect()
+    limits = [(max_process_workers(res.platform), "at most {n} matching processes on this system"),
+              (max(1, res.cpu_usable), "one per usable core")]  # fmt: skip
+    if res.ram_available_bytes is not None:
+        budget = max(res.ram_available_bytes - 1 * GIB, 512 * 2**20)
+        limits.append((max(1, int(budget // MATCH_WORKER_BYTES)), "as many as memory allows"))
+    n, why = min(limits, key=lambda item: item[0])
+    return int(n), why.format(n=n)
+
+
 def recommend_workers(res: Resources | None = None) -> WorkerPlan:
     res = res or detect()
     cores = res.cpu_usable

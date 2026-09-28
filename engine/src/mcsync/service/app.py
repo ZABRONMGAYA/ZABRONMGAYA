@@ -52,7 +52,7 @@ from mcsync.resources import (
     WorkerPlan,
     detect,
     disk_space,
-    max_process_workers,
+    matcher_limit,
     measure_write_speed,
     raise_open_file_limit,
     recommend_workers,
@@ -270,9 +270,10 @@ class EngineService(AiMethods):
                 if any(v < 1 or v > 256 for v in values.values()):
                     raise RpcError(APP_ERROR, "worker counts must be between 1 and 256")
                 reason = "set by the user"
-                if values["match"] > max_process_workers():
-                    values["match"] = max_process_workers()
-                    reason += f" (at most {values['match']} matching processes on this system)"
+                limit, why = matcher_limit()
+                if values["match"] > limit:
+                    values["match"] = limit
+                    reason += f" (at most {limit}: {why})"
                 plan, self.worker_mode = WorkerPlan(**values, reason=reason), "manual"
             else:
                 raise RpcError(APP_ERROR, "workers must be 'auto' or an object")

@@ -233,16 +233,25 @@ test("imports four cameras and two recorders and synchronises them to their know
 
   if (process.platform === "win32") {
     // Windows allows at most 61 processes in a pool: asking for 64 matchers used to fail the whole sync with
-    // "max_workers must be <= 61". The engine now caps the request, and the sync below runs with that pool.
+    // "max_workers must be <= 61". The engine now caps the request by the platform, the cores and the memory
+    // (61 on a large workstation, 4 on a 4-core runner), and the sync below runs with that pool.
     const configured = await page.evaluate(async () => {
       const bridge = (
         window as unknown as {
-          mcsync: { invoke(m: string, p: object): Promise<{ ok: boolean; result?: { plan: { match: number } } }> };
+          mcsync: {
+            invoke(
+              m: string,
+              p: object,
+            ): Promise<{ ok: boolean; result?: { plan: { match: number; reason: string } } }>;
+          };
         }
       ).mcsync;
       return bridge.invoke("engine.configure", { workers: { match: 64 } });
     });
-    expect(configured.result?.plan.match).toBe(61);
+    expect(configured.ok).toBe(true);
+    expect(configured.result!.plan.match).toBeGreaterThanOrEqual(1);
+    expect(configured.result!.plan.match).toBeLessThanOrEqual(61);
+    expect(configured.result!.plan.reason).toContain("at most");
   }
   await page.getByTestId("sync").click();
   await expect(page.getByTestId("results")).toBeVisible({ timeout: 300_000 });
@@ -290,6 +299,9 @@ test("1-3 · plays every camera in sync, the ProRes camera through FFmpeg", asyn
   await page.getByTestId("play").click();
   await page.waitForTimeout(2500);
   const moving = await sceneFrames();
+  // Pictures per second each camera window showed over the last second of playback (reported, not asserted:
+  // it depends on the machine; CI runners draw without a GPU).
+  console.log("PREVIEW", JSON.stringify(await page.evaluate(() => window.mcsyncMulticam!.tiles())));
   await page.getByTestId("play").click();
   const t1 = await clockNow();
   expect(t1 - master).toBeGreaterThan(1.5);

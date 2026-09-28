@@ -10,8 +10,10 @@ Projects from 1.2 open and are upgraded.
 
 - **Windows: "ValueError: max_workers must be <= 61".** On computers with more than 61 usable processor threads the
   matcher asked Windows for more worker processes than it allows, and synchronisation failed. Worker counts now
-  come from the processor, memory and platform (never more than 61 processes on Windows, whatever is set in
-  Settings → Performance), and one failed file never stops the queue.
+  come from the processor, memory and platform: one matching process per usable core at most, as many as memory
+  allows, and never more than 61 on Windows, whatever is set in Settings → Performance. A pool whose processes
+  cannot all start (out of memory, too many processes for the system) is started again with half as many instead
+  of waiting forever, and one failed file never stops the queue.
 - **Too many clips left for review on noisy cameras** (for example a gimbal camera whose microphone hears mostly its
   motors and wind). The engine itself was improved, the thresholds were not lowered:
   - a noise-robust band envelope finds candidates in footage where the room is quieter than the motors;

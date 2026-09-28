@@ -53,11 +53,44 @@ def test_explicit_worker_counts_are_capped(monkeypatch):
 def test_manual_worker_setting_is_capped_on_windows(monkeypatch, tmp_path):
     svc = EngineService(cache_dir=str(tmp_path / "cache"), workers=1)
     try:
-        monkeypatch.setattr(resources.sys, "platform", "win32")
-        result = svc.engine_configure({"probe": 4, "analyze": 4, "match": 64})
-        assert result["plan"]["match"] == 61 and "at most 61" in result["plan"]["reason"]
+        monkeypatch.setattr(resources, "detect", lambda: machine(128))  # a 128-core Windows workstation
+        result = svc.engine_configure({"probe": 4, "analyze": 4, "match": 100})
+        assert result["plan"]["match"] == 61 and "at most 61 matching processes" in result["plan"]["reason"]
     finally:
         svc.close()
+
+
+def test_manual_worker_setting_is_capped_by_cores_and_memory(monkeypatch, tmp_path):
+    svc = EngineService(cache_dir=str(tmp_path / "cache"), workers=1)
+    try:
+        monkeypatch.setattr(resources, "detect", lambda: machine(4))
+        result = svc.engine_configure({"match": 64})
+        assert result["plan"]["match"] == 4 and "one per usable core" in result["plan"]["reason"]
+        monkeypatch.setattr(resources, "detect", lambda: machine(64, ram_gb=3.0))
+        assert svc.engine_configure({"match": 64})["plan"]["match"] == 5  # (3 GB - 1 GB) / 400 MB
+    finally:
+        svc.close()
+
+
+def test_a_pool_that_cannot_start_is_retried_with_fewer_workers(monkeypatch):
+    from concurrent.futures.process import BrokenProcessPool
+
+    from mcsync.sync import engine
+
+    tried: list[int] = []
+
+    def start(n: int):
+        tried.append(n)
+        if n > 3:
+            raise BrokenProcessPool("a worker died while starting")
+        return f"pool of {n}"
+
+    monkeypatch.setattr(engine, "_start_pool", start)
+    assert engine.create_match_pool(12) == "pool of 3"
+    assert tried == [12, 6, 3]
+    monkeypatch.setattr(engine, "_start_pool", lambda n: (_ for _ in ()).throw(TimeoutError()))
+    with pytest.raises(TimeoutError):
+        engine.create_match_pool(4)  # not even one worker: the error reaches the sync, which reports it
 
 
 def _square(x: int) -> int:

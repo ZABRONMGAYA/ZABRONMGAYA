@@ -14,10 +14,13 @@ Synchronisation runs in two phases with very different costs:
 
 from __future__ import annotations
 
+import logging
 import multiprocessing
 import os
+import time
 from collections.abc import Callable, Sequence
 from concurrent.futures import Executor, ProcessPoolExecutor, as_completed
+from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass, field, replace
 from typing import Protocol
 
@@ -323,27 +326,52 @@ def _reverse(est: OffsetEstimate) -> OffsetEstimate:
 _SINGLE_THREAD_ENV = {"OPENBLAS_NUM_THREADS": "1", "OMP_NUM_THREADS": "1", "MKL_NUM_THREADS": "1"}
 
 
+_log = logging.getLogger(__name__)
+
+
 def create_match_pool(workers: int | None = None) -> ProcessPoolExecutor:
     """A warmed-up pool of matcher processes.
 
     Workers use single-threaded maths libraries (N processes × N library
     threads on N cores made parallel matching 3× *slower* than serial), and
     they are started together up front rather than one by one on demand.
+
+    A pool that cannot start all its workers (a worker dies while starting, or they do not all start in time: out
+    of memory, too many processes for the system) is shut down and started again with half as many, down to one:
+    the sync goes on with fewer processes instead of waiting forever.
     """
     workers = safe_process_workers(workers)  # at most 61 on Windows (Python's limit for process pools there)
+    while True:
+        try:
+            return _start_pool(workers)
+        except (BrokenProcessPool, OSError, TimeoutError) as exc:
+            if workers <= 1:
+                raise
+            _log.warning("%d matcher processes could not start (%s); trying %d", workers, exc or type(exc).__name__,
+                         workers // 2)  # fmt: skip
+            workers //= 2
+
+
+def _start_pool(workers: int) -> ProcessPoolExecutor:
     saved = {k: os.environ.get(k) for k in _SINGLE_THREAD_ENV}
     os.environ.update(_SINGLE_THREAD_ENV)
+    pool = None
     try:
         pool = ProcessPoolExecutor(max_workers=workers, mp_context=multiprocessing.get_context("spawn"))
+        deadline = time.monotonic() + 30.0 + 2.0 * workers
         for future in [pool.submit(_warm_up) for _ in range(workers)]:
-            future.result()
+            future.result(timeout=max(0.5, deadline - time.monotonic()))
+        return pool
+    except BaseException:
+        if pool is not None:
+            pool.shutdown(wait=False, cancel_futures=True)
+        raise
     finally:
         for key, value in saved.items():
             if value is None:
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = value
-    return pool
 
 
 def _warm_up() -> None:
