@@ -26,6 +26,15 @@ const bridge: Bridge = {
   readPeaks: (directory, file, offset, length) => ipcRenderer.invoke("peaks:read", directory, file, offset, length),
   readThumbnail: (file) => ipcRenderer.invoke("thumb:read", file),
   mediaUrl: (file) => `syncora-media://media/${encodeURIComponent(file)}`,
+  preview: {
+    caps: () => ipcRenderer.invoke("preview:caps"),
+    frame: (file, t, height, slot) => ipcRenderer.invoke("preview:frame", file, t, height, slot),
+    open: (file, start, fps, height) => ipcRenderer.invoke("preview:open", file, start, fps, height),
+    at: (id, t) => ipcRenderer.invoke("preview:at", id, t),
+    close: (id) => ipcRenderer.invoke("preview:close", id),
+    audio: (file, start, seconds, rate, stream) =>
+      ipcRenderer.invoke("preview:audio", file, start, seconds, rate, stream),
+  },
   platform: process.platform,
 };
 

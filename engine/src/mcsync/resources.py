@@ -148,6 +148,25 @@ def detect() -> Resources:
 ANALYZE_WORKER_BYTES = 200 * 2**20
 MATCH_WORKER_BYTES = 400 * 2**20
 
+#: On Windows a process pool waits on at most 63 handles and needs two itself: Python refuses more than 61 workers
+#: ("ValueError: max_workers must be <= 61"), whatever the number of processors.
+WINDOWS_MAX_PROCESS_WORKERS = 61
+#: Elsewhere there is no such limit; this only guards against absurd requests.
+MAX_PROCESS_WORKERS = 256
+
+
+def max_process_workers(platform: str | None = None) -> int:
+    """The most worker processes one pool may have on this platform."""
+    return WINDOWS_MAX_PROCESS_WORKERS if (platform or sys.platform) == "win32" else MAX_PROCESS_WORKERS
+
+
+def safe_process_workers(requested: int | None = None, platform: str | None = None) -> int:
+    """Worker processes to start for a pool: ``requested`` (default: one per usable core, one core left free),
+    never fewer than 1 nor more than the platform allows. Work items are queued to these workers: 4,000 files are
+    4,000 jobs for the pool, not 4,000 processes."""
+    wanted = requested if requested is not None else cpu_usable() - 1
+    return int(max(1, min(int(wanted), max_process_workers(platform))))
+
 
 def recommend_workers(res: Resources | None = None) -> WorkerPlan:
     res = res or detect()
@@ -163,6 +182,10 @@ def recommend_workers(res: Resources | None = None) -> WorkerPlan:
     else:
         by_ram_match = by_ram_analyze = compute
     match = int(min(compute, by_ram_match))
+    limit = max_process_workers(res.platform)
+    if match > limit:
+        match = limit
+        reason.append(f"at most {limit} matching processes on this system")
     # Decoding runs in FFmpeg processes that also read the disk: more than 8 at once only adds seeking.
     analyze = int(min(compute, by_ram_analyze, 8))
     probe = int(min(8, max(2, cores)))

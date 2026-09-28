@@ -21,6 +21,7 @@ from concurrent.futures import Executor, ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, field, replace
 from typing import Protocol
 
+from ..resources import safe_process_workers
 from .pairwise import estimate_offset
 from .params import DEFAULT_PARAMS, DEFAULT_SOLVER_PARAMS, SolverParams, SyncParams
 from .solver import clock_sigma, clock_starts, solve_placements
@@ -329,7 +330,7 @@ def create_match_pool(workers: int | None = None) -> ProcessPoolExecutor:
     threads on N cores made parallel matching 3× *slower* than serial), and
     they are started together up front rather than one by one on demand.
     """
-    workers = workers or max(1, (os.cpu_count() or 2) - 1)
+    workers = safe_process_workers(workers)  # at most 61 on Windows (Python's limit for process pools there)
     saved = {k: os.environ.get(k) for k in _SINGLE_THREAD_ENV}
     os.environ.update(_SINGLE_THREAD_ENV)
     try:

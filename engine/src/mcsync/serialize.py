@@ -114,6 +114,7 @@ def estimate_from_dict(d: dict) -> OffsetEstimate:
         flags=tuple(Flag(f) for f in d.get("flags", ())),
         windows=tuple(WindowMeasurement(**w) for w in d.get("windows", ())),
         alternatives=tuple(Candidate(**a) for a in d.get("alternatives", ())),
+        prominence=d.get("prominence", 0.0),
     )
 
 

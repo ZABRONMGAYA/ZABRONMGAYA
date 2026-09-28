@@ -33,6 +33,12 @@ class SyncParams:
     envelope_floor_db: float = -40.0
     #: Length of the moving average removed from the log envelope.
     envelope_detrend_s: float = 1.0
+    #: Band envelope (the noise-robust second coarse feature, see ``features.band_envelope``): its bands span this
+    #: range (above wind and handling rumble), each compared with its own running level over ``band_detrend_s``.
+    band_env_low_hz: float = 300.0
+    band_env_high_hz: float = 3500.0
+    band_env_bands: int = 12
+    band_env_detrend_s: float = 1.0
     #: Minimum overlap for a lag to be considered at all.
     min_overlap_s: float = 3.0
     #: Half-width of the zone around a peak in which no other candidate may lie.
@@ -41,8 +47,12 @@ class SyncParams:
     max_candidates: int = 3
     #: A candidate is refined only if its PSR is at least this fraction of the best.
     candidate_ratio: float = 0.6
-    #: Coarse peak-to-sidelobe ratio (robust z-score) required to attempt a match.
+    #: Coarse peak-to-sidelobe ratio (robust z-score) of a clear detection (full credit in the confidence).
     detection_psr: float = 5.0
+    #: Candidates from this z-score up are verified by the fine stage even when no candidate reaches
+    #: ``detection_psr``: a camera whose sound is buried in its own noise often ranks the true offset first at
+    #: z ≈ 4, and only the fine stage (several windows agreeing to the millisecond) can confirm it.
+    refine_psr: float = 3.5
 
     # --- Fine stage (windowed GCC-PHAT on the waveform) -------------------
     fine_window_s: float = 10.0
@@ -58,6 +68,13 @@ class SyncParams:
     inlier_tolerance_s: float = 0.001
     #: Windows quieter than this (dB relative to the clip RMS) are skipped.
     window_silence_db: float = -35.0
+    #: Search half-width of each fine window's correlogram used to measure how sharply its peak stands out
+    #: (the lag itself is still taken within ``fine_margin_s``).
+    prominence_radius_s: float = 0.25
+    #: Median peak prominence (robust z-score of the fine windows' correlation peaks) above which windows hear
+    #: the same sound, however faint: noise-buried camera matches measured 25–40, the beat grid of different music
+    #: at most 10.
+    same_sound_prominence: float = 15.0
 
     # --- Classification ---------------------------------------------------
     confident_threshold: float = 0.7

@@ -15,6 +15,7 @@ import {
   type Method,
 } from "../src/api/contract";
 import { EngineProcess, RpcError, engineCommand } from "./engine";
+import { PreviewServer, ffmpegPath } from "./preview";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const allowed = new Set<string>(ENGINE_METHODS);
@@ -50,6 +51,14 @@ const engine = new EngineProcess(() =>
   engineCommand({ packaged: app.isPackaged, resourcesPath: process.resourcesPath }),
 );
 let window: BrowserWindow | null = null;
+// Pictures and sound for the multicamera preview, of the open project's media only.
+let preview: PreviewServer | null = null;
+function previewServer(): PreviewServer {
+  preview ??= new PreviewServer(ffmpegPath({ packaged: app.isPackaged, resourcesPath: process.resourcesPath }), (f) =>
+    playable.has(f),
+  );
+  return preview;
+}
 
 function send(event: EngineEvent): void {
   window?.webContents.send("engine:event", event);
@@ -249,9 +258,16 @@ function buildMenu(): void {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
+function clampHeight(h: number): number {
+  return Math.min(2160, Math.max(144, Math.round(Number(h) || 360)));
+}
+
 /** Remember the media files the engine lists for the open project (the player may stream only those). */
 function rememberMedia(method: string, result: unknown): void {
-  if (method === "project.open" || method === "project.create" || method === "project.close") playable.clear();
+  if (method === "project.open" || method === "project.create" || method === "project.close") {
+    playable.clear();
+    preview?.reset();
+  }
   if (method === "media.list") {
     for (const c of (result as { clips: { path: string }[] }).clips) playable.add(path.resolve(c.path));
   } else if (method === "media.index") {
@@ -340,6 +356,36 @@ function registerIpc(): void {
     }
   });
   ipcMain.handle("engine:status", () => engine.status);
+  // The multicamera preview (preview.ts): frames while scrubbing, frame streams while playing, monitor sound.
+  ipcMain.handle("preview:caps", async () => ({
+    ...(await previewServer().capabilities()),
+    videoDecode: String((app.getGPUFeatureStatus() as unknown as Record<string, string>).video_decode ?? "unknown"),
+  }));
+  ipcMain.handle("preview:frame", async (_e, file: string, t: number, height: number, slot: string) => {
+    const jpeg = await previewServer().frame(file, Number(t), clampHeight(height), String(slot));
+    return jpeg ? new Uint8Array(jpeg.buffer, jpeg.byteOffset, jpeg.byteLength) : null;
+  });
+  ipcMain.handle("preview:open", (_e, file: string, start: number, fps: number, height: number) =>
+    previewServer().open(file, Number(start), Math.min(60, Math.max(1, Number(fps) || 25)), clampHeight(height)),
+  );
+  ipcMain.handle("preview:at", (_e, id: string, t: number) => {
+    const r = previewServer().at(String(id), Number(t));
+    return r === null || r === "reopen" ? r : new Uint8Array(r.buffer, r.byteOffset, r.byteLength);
+  });
+  ipcMain.handle("preview:close", (_e, id: string) => previewServer().close(String(id)));
+  ipcMain.handle(
+    "preview:audio",
+    async (_e, file: string, start: number, seconds: number, rate: number, stream: number | null) => {
+      const pcm = await previewServer().audio(
+        file,
+        Number(start),
+        Math.min(30, Math.max(0.05, Number(seconds))),
+        Math.min(96000, Math.max(8000, Number(rate) || 48000)),
+        stream === null || stream === undefined ? null : Number(stream),
+      );
+      return pcm ? new Float32Array(pcm.buffer.slice(pcm.byteOffset, pcm.byteOffset + pcm.byteLength)) : null;
+    },
+  );
   ipcMain.handle("dialog:media", async (_e, kind: "files" | "folder") => {
     const result = await dialog.showOpenDialog(window!, {
       title: kind === "folder" ? "Import a folder of footage" : "Import media files",
@@ -446,6 +492,8 @@ app.on("before-quit", (event) => {
   quitting = true;
   void engine.stop().finally(() => app.quit());
 });
+
+app.on("will-quit", () => preview?.dispose());
 
 app.on("window-all-closed", () => {
   app.quit();

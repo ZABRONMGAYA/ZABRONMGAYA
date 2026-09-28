@@ -284,30 +284,38 @@ def solve_placements(
     moved = {index[mo.clip_id] for mo in corrections.offsets}
     edge_moved = np.array([e.i in moved or e.j in moved for e in edges], dtype=bool)
     residuals = np.zeros(len(edges))
-    while True:
-        rates = _solve_rates(ea, n_nodes, anchor_for)
-        uf, manual_ok = _manual_constraints(corrections, index, rates, durations, n_nodes, params)
-        root_of, off_of = _flatten(uf, n_nodes)
-        targets = ea.targets(rates)
-        positions, component, comp_of_root = _solve_starts(ea, targets, root_of, off_of, n_nodes, uf, anchor_for)
-        if not edges:
+    clock_vetoed: set[int] = set()
+    for _attempt in range(2):
+        while True:
+            rates = _solve_rates(ea, n_nodes, anchor_for)
+            uf, manual_ok = _manual_constraints(corrections, index, rates, durations, n_nodes, params)
+            root_of, off_of = _flatten(uf, n_nodes)
+            targets = ea.targets(rates)
+            positions, component, comp_of_root = _solve_starts(ea, targets, root_of, off_of, n_nodes, uf, anchor_for)
+            if not edges:
+                break
+            node_pos = positions[root_of] + off_of
+            residuals = node_pos[ea.j] - node_pos[ea.i] - targets
+            scores = np.where(ea.active, np.abs(residuals) / ea.scale, 0.0)
+            bad = np.flatnonzero(scores > 1.0)
+            if len(bad) == 0:
+                break
+            # The worst edge of every component (ties: the one touching a clip placed by hand).
+            comp = comp_of_root[root_of[ea.i[bad]]]
+            order = np.lexsort((edge_moved[bad], np.round(scores[bad], 6), comp))
+            last_of_comp = np.r_[comp[order][1:] != comp[order][:-1], True]
+            ea.active[bad[order[last_of_comp]]] = False
+        vetoes = _clock_vetoes(edges, ea, n_clips, moved, params) if _attempt == 0 else ([], [])
+        if not vetoes[0]:
             break
-        node_pos = positions[root_of] + off_of
-        residuals = node_pos[ea.j] - node_pos[ea.i] - targets
-        scores = np.where(ea.active, np.abs(residuals) / ea.scale, 0.0)
-        bad = np.flatnonzero(scores > 1.0)
-        if len(bad) == 0:
-            break
-        # The worst edge of every component (ties: the one touching a clip placed by hand).
-        comp = comp_of_root[root_of[ea.i[bad]]]
-        order = np.lexsort((edge_moved[bad], np.round(scores[bad], 6), comp))
-        last_of_comp = np.r_[comp[order][1:] != comp[order][:-1], True]
-        ea.active[bad[order[last_of_comp]]] = False
+        ea.active[vetoes[0]] = False
+        ea.active[vetoes[1]] = True
+        clock_vetoed.update(vetoes[0])
     for k, e in enumerate(edges):
         e.residual_s = float(residuals[k])
         if e.active and not ea.active[k]:
             e.active = False
-            e.reason = Flag.REJECTED_INCONSISTENT
+            e.reason = Flag.CLOCK_MISMATCH if k in clock_vetoed else Flag.REJECTED_INCONSISTENT
 
     warnings = [
         f"manual offset of {mo.clip_id!r} relative to {mo.anchor_clip_id!r} contradicts "
@@ -353,6 +361,8 @@ def solve_placements(
         mine = incident[k]
         if any(e.kind == EdgeKind.CLOCK and not e.active for e in mine):
             flags.append(Flag.TIMECODE_DISAGREES)
+        if any(e.reason == Flag.CLOCK_MISMATCH for e in mine):
+            flags.append(Flag.CLOCK_MISMATCH)  # an uncertain audio match its device's clock contradicts
         # A confident audio match the solver had to reject casts doubt on both
         # clips, unless the user placed the other clip by hand (then the user
         # overrode the audio, and only the manual clip carries the note).
@@ -512,6 +522,44 @@ def _drop_redundant_uncertain(
             continue
         parent[ra] = rb
         kinds[rb] |= kinds.pop(ra)
+
+
+def _clock_vetoes(
+    edges: list[_Edge], ea: _EdgeArrays, n_clips: int, moved: set[int], params: SolverParams
+) -> tuple[list[int], list[int]]:
+    """Uncertain audio matches that a calibrated device clock contradicts, and the clock edges to restore.
+
+    Least squares trusts the tight audio edge, so when a clip's only audio evidence is uncertain and disagrees with
+    its device's clock, outlier rejection drops the clock edge and keeps the audio. When that clock is calibrated
+    (at least three other clips of the domain are held by confident audio), the uncertain match is the less likely
+    of the two: it is rejected (``CLOCK_MISMATCH``) and the clip is placed by its clock, still for review. A
+    confident match is never overruled by a clock.
+    """
+    by_clip: dict[int, list[int]] = defaultdict(list)
+    for k, e in enumerate(edges):
+        by_clip[e.i].append(k)
+        by_clip[e.j].append(k)
+    confident_clip = [False] * n_clips
+    for k, e in enumerate(edges):
+        if ea.active[k] and e.kind == EdgeKind.AUDIO and e.confidence >= params.confident_threshold:
+            confident_clip[e.i] = confident_clip[e.j] = True
+    calibrated: dict[int, int] = defaultdict(int)  # clock domain node -> confident clips its active edges hold
+    for k, e in enumerate(edges):
+        if ea.active[k] and e.kind == EdgeKind.CLOCK and confident_clip[e.j]:
+            calibrated[e.i] += 1
+    drop: list[int] = []
+    restore: list[int] = []
+    for clip in range(n_clips):
+        if confident_clip[clip] or clip in moved:
+            continue
+        mine = by_clip.get(clip, [])
+        audio = [k for k in mine if edges[k].kind == EdgeKind.AUDIO and ea.active[k]]
+        clock = [k for k in mine if edges[k].kind == EdgeKind.CLOCK and not ea.active[k] and edges[k].active
+                 and calibrated[edges[k].i] >= 3]  # fmt: skip
+        if audio and clock:
+            drop.extend(audio)
+            restore.extend(clock)
+    return drop, restore
 
 
 class _EdgeArrays:

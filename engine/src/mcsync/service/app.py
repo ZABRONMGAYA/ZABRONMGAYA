@@ -50,16 +50,18 @@ from mcsync.resources import (
     WorkerPlan,
     detect,
     disk_space,
+    max_process_workers,
     measure_write_speed,
     raise_open_file_limit,
     recommend_workers,
+    safe_process_workers,
 )
 from mcsync.serialize import to_jsonable
 from mcsync.service.ai_methods import AiMethods
 from mcsync.sync.candidates import PlannedPair
 from mcsync.sync.engine import SyncEngine, SyncOptions, create_match_pool
 from mcsync.sync.params import DEFAULT_PARAMS, SyncParams
-from mcsync.sync.types import ClipInput, PairwiseMatch, PlacementMethod, PlacementStatus, SyncMode
+from mcsync.sync.types import ClipInput, PairwiseMatch, PlacementMethod, PlacementStatus, SyncMode, SyncResult
 from mcsync.timecode import parse_frame_rate
 from mcsync.timeline import build_timeline
 
@@ -67,11 +69,12 @@ from .jobs import Job, JobCancelled, JobManager
 from .rpc import APP_ERROR, BUSY, FFMPEG_MISSING, NO_PROJECT, JsonRpcServer, RpcError
 
 PROTOCOL_VERSION = 2
-#: Keys of clock-window and full-search matches. 3: matches that barely correlate are no longer confident, so pairs
-#: stored by earlier versions are verified again.
-MATCH_KEY_VERSION = "3"
-#: Keys of fingerprint-candidate and extended-search matches: independent of the exact window.
-STAGED_KEY_VERSION = "4"
+#: Keys of clock-window and full-search matches. 3: matches that barely correlate are no longer confident; 4 (1.3):
+#: the noise-robust band envelope finds candidates in noisy cameras and peak prominence tells faint same-sound
+#: matches from beat grids. Pairs stored by earlier versions are verified again.
+MATCH_KEY_VERSION = "4"
+#: Keys of fingerprint-candidate and extended-search matches: independent of the exact window (5: as above).
+STAGED_KEY_VERSION = "5"
 SETTINGS_DEFAULTS: dict[str, Any] = {
     "mode": SyncMode.HYBRID.value,
     "reference_clip_id": None,
@@ -261,7 +264,11 @@ class EngineService(AiMethods):
                 values = {k: int(workers.get(k, getattr(self.plan, k))) for k in ("probe", "analyze", "match")}
                 if any(v < 1 or v > 256 for v in values.values()):
                     raise RpcError(APP_ERROR, "worker counts must be between 1 and 256")
-                plan, self.worker_mode = WorkerPlan(**values, reason="set by the user"), "manual"
+                reason = "set by the user"
+                if values["match"] > max_process_workers():
+                    values["match"] = max_process_workers()
+                    reason += f" (at most {values['match']} matching processes on this system)"
+                plan, self.worker_mode = WorkerPlan(**values, reason=reason), "manual"
             else:
                 raise RpcError(APP_ERROR, "workers must be 'auto' or an object")
             if plan.match != self.plan.match:
@@ -788,7 +795,7 @@ class EngineService(AiMethods):
             row, clip = rows[clip_id], inputs[clip_id]
             return [row.fingerprint, row.audio_stream, row.audio_channel, round(clip.audio_start_s, 6)]
 
-        if pair.stage in ("clock", "full"):
+        if pair.stage in ("clock", "full", "anchored"):
             (window,) = pair.windows if len(pair.windows) == 1 else (tuple(pair.windows),)
             w = None if window is None else [round(window[0], 3), round(window[1], 3)]
             text = json.dumps([MATCH_KEY_VERSION, repr(self.params), side(pair.ref), side(pair.tgt), w])
@@ -878,6 +885,24 @@ class EngineService(AiMethods):
         project.save_placements(result)
         placements = {int(cid): p for cid, p in result.placements.items()}
         return to_jsonable(build_timeline(rows, placements, int(result.reference_id)))
+
+    def provisional_solve(self, run_id: int) -> SyncResult:
+        """Placements from a run still in progress (its matches so far), without saving them: the anchoring phase
+        reads where each device's confidently matched clips landed."""
+        project = self._require_project()
+        rows = project.clips()
+        clips = self._clip_inputs(rows, extract=False)
+        current = {c.clip_id for c in clips}
+        matches = [m for m in project.run_matches(run_id) if m.ref_id in current and m.tgt_id in current]
+        corrections = project.corrections()
+        ignored = {r.engine_id for r in rows if r.ignored_duplicate}
+        if ignored:
+            corrections = type(corrections)(
+                offsets=[o for o in corrections.offsets if not {o.clip_id, o.anchor_clip_id} & ignored],
+                rejected_pairs=corrections.rejected_pairs,
+                excluded_clips=set(corrections.excluded_clips) | ignored,
+            )
+        return self._engine().solve(clips, matches, corrections, report_edges=False)
 
     def _run_matches(self, run_id: int) -> list[PairwiseMatch]:
         """A finished run's matches, parsed once: 26,000 of them take over a second to load and decode."""
@@ -1127,7 +1152,7 @@ class EngineService(AiMethods):
 
 def _plan_for(workers: int, recommended: WorkerPlan) -> WorkerPlan:
     """A worker plan for an explicit matcher count (``--workers``)."""
-    workers = max(1, int(workers))
+    workers = safe_process_workers(int(workers))
     return WorkerPlan(probe=recommended.probe, analyze=max(1, min(recommended.analyze, workers)), match=workers,
                       reason=f"{workers} matcher worker(s) requested")  # fmt: skip
 

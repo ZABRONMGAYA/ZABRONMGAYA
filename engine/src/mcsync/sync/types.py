@@ -117,6 +117,9 @@ class WindowMeasurement:
     lag_s: float  # measured offset in that window
     correlation: float  # Pearson correlation of the aligned waveforms
     inlier: bool
+    #: How far the window's correlation peak stands above its correlogram (robust z-score): high when both
+    #: windows hear the same sound, even far below noise; low for merely similar rhythm.
+    prominence: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -153,6 +156,8 @@ class OffsetEstimate:
     flags: tuple[Flag, ...] = ()
     windows: tuple[WindowMeasurement, ...] = ()
     alternatives: tuple[Candidate, ...] = ()
+    #: Median peak prominence of the agreeing windows (see ``WindowMeasurement.prominence``).
+    prominence: float = 0.0
 
     @property
     def n_inliers(self) -> int:

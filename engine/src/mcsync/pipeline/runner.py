@@ -46,6 +46,7 @@ from mcsync.media.library import MediaItem
 from mcsync.media.probe import ProbeError, probe
 from mcsync.project.db import Project, Task
 from mcsync.sync.candidates import (
+    DRIFT_ALLOWANCE,
     EXHAUSTIVE_PAIR_BUDGET,
     PlannedPair,
     clock_pairs,
@@ -70,7 +71,12 @@ PROGRESS_INTERVAL_S = 0.25
 _FLUSH_INTERVAL_S = 0.3
 _QUERY_BATCH = 16
 MAX_ATTEMPTS = 3
-PHASES = ("waiting", "planning", "matching", "extending", "solving", "done")
+PHASES = ("waiting", "planning", "matching", "extending", "anchoring", "solving", "done")
+#: Anchoring (temporal continuity): a device's clips share its clock. Once some of them are placed by confident audio
+#: matches, the clock's offset is known and the others are searched only this close to where it puts them.
+ANCHOR_MIN_UNCERTAINTY_S = 1.5  # camera recording times have one-second resolution
+ANCHOR_REFERENCES = 3  # placed recordings each clip is compared with
+ANCHOR_MIN_OVERLAP_S = 3.0
 
 
 class PipelineStopped(Exception):
@@ -443,7 +449,9 @@ class Pipeline:
             if free <= 0:
                 continue
             kinds = ["match", "extend"] if kind == "match" else [kind]
-            if kind == "match" and (self._sync is None or self._sync.get("phase") not in ("matching", "extending")):
+            if kind == "match" and (
+                self._sync is None or self._sync.get("phase") not in ("matching", "extending", "anchoring")
+            ):
                 continue
             # Checked again under the lock at the moment of claiming: the loop decided to fill before a pause may
             # have arrived, and nothing may start once pause() has returned.
@@ -820,10 +828,16 @@ class Pipeline:
                 self._start_aux("Extended search", self._plan_extended, s["run_id"])
         elif phase == "extending":
             if not self._busy("extend") and s.get("extended_planned"):
-                self._set_sync({**s, "phase": "solving"})
-                self._start_aux("Solving", self._solve_run, s["run_id"])
+                self._set_sync({**s, "phase": "anchoring"})
+                self._start_aux("Clock anchoring", self._plan_anchored, s["run_id"])
             elif not s.get("extended_planned"):
                 self._start_aux("Extended search", self._plan_extended, s["run_id"])
+        elif phase == "anchoring":
+            if not self._busy("extend") and s.get("anchored_planned"):
+                self._set_sync({**s, "phase": "solving"})
+                self._start_aux("Solving", self._solve_run, s["run_id"])
+            elif not s.get("anchored_planned"):
+                self._start_aux("Clock anchoring", self._plan_anchored, s["run_id"])
         elif phase == "solving":
             self._start_aux("Solving", self._solve_run, s["run_id"])
 
@@ -955,6 +969,32 @@ class Pipeline:
         s = self._sync or {}
         self._set_sync({**s, "extended_planned": True, "unmatched": len(unmatched), "extended": len(plans)})
         self._log("Extended search", f"{len(unmatched)} clips without a confident match, {len(plans)} searches")
+        self._wake("match")
+
+    def _plan_anchored(self, run_id: int) -> None:
+        """Temporal continuity: search clips without a confident match again, narrowly, where their own device's
+        clock puts them once its offset is known from that device's confidently matched clips."""
+        project = self.project
+        engine = self.service._engine()
+        active = self._active()
+        inputs = {c.clip_id: c for c in active}
+        plans = anchored_pairs(self.service.provisional_solve(run_id), project.clips(), inputs,
+                               confident=engine.options.solver.confident_threshold)  # fmt: skip
+        rows = {r.engine_id: r for r in project.clips()}
+        keys = [self.service.pair_key(p, rows, inputs) for p in plans]
+        known = project.known_pair_keys(keys)
+        reuse = [(k, int(p.ref), int(p.tgt)) for p, k in zip(plans, keys, strict=True) if k in known]
+        project.copy_matches(run_id, reuse)
+        project.enqueue("extend", [
+            {"target": k, "clip_id": int(p.ref), "other_clip_id": int(p.tgt), "stage": p.stage, "run_id": run_id,
+             "priority": 4, "detail": {"windows": p.windows, "stage": p.stage}}
+            for p, k in zip(plans, keys, strict=True) if k not in known
+        ], requeue=True)  # fmt: skip
+        s = self._sync or {}
+        clips = len({p.tgt for p in plans})
+        self._set_sync({**s, "anchored_planned": True, "anchored": len(plans), "anchored_clips": clips})
+        if plans:
+            self._log("Clock anchoring", f"{clips} clips searched again near where their camera's clock puts them")
         self._wake("match")
 
     def _clock_placed(self, active: list[ClipInput]) -> set[str]:
@@ -1115,3 +1155,79 @@ def assign_chapters(project: Project) -> int:
     if updates:
         project.set_chapters(updates)
     return len(updates)
+
+
+def anchored_pairs(
+    result: Any,
+    rows: list,
+    inputs: dict[str, ClipInput],
+    *,
+    confident: float = 0.7,
+) -> list[PlannedPair]:
+    """Narrow searches for clips a device's calibrated clock places (see ``Pipeline._plan_anchored``).
+
+    For each device and sync group, the clock offset is the median of ``start - recording time`` over the clips
+    of that device confident audio matches placed there. Every other clip of the device (no confident match) is
+    compared with up to ``ANCHOR_REFERENCES`` confidently placed recordings of other devices it overlaps there
+    (sound recorders first, then the longest overlap), within ``ANCHOR_MIN_UNCERTAINTY_S`` (or three times the
+    offsets' spread) of the predicted position.
+    """
+    from mcsync.sync.types import PlacementMethod, PlacementStatus
+
+    placements = result.placements
+    by_id = {r.engine_id: r for r in rows}
+
+    def confident_audio(cid: str) -> bool:
+        p = placements.get(cid)
+        return (p is not None and p.start_s is not None and p.status == PlacementStatus.SYNCED
+                and p.method in (PlacementMethod.AUDIO, PlacementMethod.REFERENCE, PlacementMethod.MANUAL)
+                and p.confidence >= confident)  # fmt: skip
+
+    offsets: dict[tuple, list[float]] = defaultdict(list)
+    for cid, p in placements.items():
+        row = by_id.get(cid)
+        if row is None or row.info.creation_time is None or not confident_audio(cid):
+            continue
+        offsets[(row.device_id, p.group)].append(p.start_s - row.info.creation_time.timestamp())
+    calib: dict[tuple, tuple[float, float]] = {}
+    for key, values in offsets.items():
+        med = float(np.median(values))
+        spread = float(np.median(np.abs(np.array(values) - med)) * 1.4826) if len(values) >= 3 else 0.0
+        calib[key] = (med, max(ANCHOR_MIN_UNCERTAINTY_S, 3.0 * spread))
+
+    placed_refs: dict[int, list[tuple[float, float, str, bool]]] = defaultdict(list)  # group -> (start, end, id, rec)
+    for cid, p in placements.items():
+        row = by_id.get(cid)
+        clip = inputs.get(cid)
+        if row is None or clip is None or clip.audio is None or not confident_audio(cid):
+            continue
+        placed_refs[p.group].append((p.start_s, p.start_s + float(clip.duration_s or 0.0), cid,
+                                     row.device_kind == "recorder"))  # fmt: skip
+
+    out: list[PlannedPair] = []
+    for cid, clip in inputs.items():
+        row = by_id.get(cid)
+        if row is None or clip.audio is None or row.info.creation_time is None or confident_audio(cid):
+            continue
+        ct = row.info.creation_time.timestamp()
+        dur = float(clip.duration_s or 0.0)
+        for (device, group), (offset, radius) in calib.items():
+            if device != row.device_id:
+                continue
+            start = ct + offset  # predicted start in the group's time
+            radius += DRIFT_ALLOWANCE * dur
+            refs = []
+            for r_start, r_end, rid, is_rec in placed_refs.get(group, ()):
+                ref_row = by_id.get(rid)
+                if rid == cid or (ref_row is not None and ref_row.device_id == row.device_id):
+                    continue
+                overlap = min(start + dur, r_end) - max(start, r_start)
+                if overlap >= ANCHOR_MIN_OVERLAP_S:
+                    refs.append((not is_rec, -overlap, rid, r_start))
+            for _, _, rid, r_start in sorted(refs)[:ANCHOR_REFERENCES]:
+                predicted = start - r_start  # start(clip) - start(reference)
+                ref, tgt, lo, hi = rid, cid, predicted - radius, predicted + radius
+                if ref > tgt:
+                    ref, tgt, lo, hi = tgt, ref, -hi, -lo
+                out.append(PlannedPair(ref, tgt, [(round(lo, 3), round(hi, 3))], "anchored"))
+    return out

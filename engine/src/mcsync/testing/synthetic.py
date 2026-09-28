@@ -226,6 +226,29 @@ def make_scene(
     return Scene(samples=x.astype(np.float32), rate=rate)
 
 
+def gimbal_noise(n: int, rate: int, rng: np.random.Generator) -> np.ndarray:
+    """What a gimbal's own motors and the operator add to a camera microphone, at unit RMS: a whining motor
+    (harmonics of 140–220 Hz that wander with the load), wind in the microphone (low rumble in gusts) and handling
+    thumps."""
+    t = np.arange(n) / rate
+    f0 = rng.uniform(140, 220) * (1 + 0.03 * np.sin(2 * np.pi * rng.uniform(0.1, 0.4) * t + rng.uniform(0, 6.3)))
+    phase = 2 * np.pi * np.cumsum(f0) / rate
+    load = 0.6 + 0.4 * np.abs(np.sin(2 * np.pi * rng.uniform(0.05, 0.2) * t + rng.uniform(0, 6.3)))
+    motor = sum(np.sin(k * phase) / k for k in range(1, 7)) * load
+    wind = _bandpassed_noise(n, rate, 20, 250, rng) if rate > 600 else rng.standard_normal(n)
+    k = max(1, rate // 2)  # half-second running mean: slow gusts
+    walk = np.concatenate([[0.0], np.cumsum(rng.standard_normal(n + k))])
+    gusts = np.clip((walk[k:] - walk[:-k])[:n] / np.sqrt(k), 0, None)
+    wind *= 3.0 * gusts / (np.std(gusts) + 1e-12)
+    thumps = np.zeros(n)
+    for _ in range(rng.poisson(n / rate / 6.0)):  # one every ~6 s
+        m = int(0.15 * rate)
+        burst = rng.standard_normal(m) * np.exp(-np.arange(m) / (0.03 * rate))
+        _add(thumps, int(rng.uniform(0, n)), 4.0 * np.convolve(burst, np.ones(20) / 20, "same"))
+    out = motor / (np.std(motor) + 1e-12) + 0.7 * wind / (np.std(wind) + 1e-12) + thumps
+    return out / (np.std(out) + 1e-12)
+
+
 def _reverb_ir(rate: int, rt60_s: float, direct_to_reverb_db: float, rng: np.random.Generator) -> np.ndarray:
     n = int(rt60_s * rate)
     tail = rng.standard_normal(n) * np.exp(-6.908 * np.arange(n) / n)  # -60 dB at rt60
@@ -251,6 +274,7 @@ def record(
     channels: int = 1,
     dtype: str = "float32",
     seed: int = 0,
+    gimbal_db: float | None = None,
 ) -> np.ndarray:
     """Capture ``scene`` as one device would.
 
@@ -266,6 +290,7 @@ def record(
         reverb_rt60_s, direct_to_reverb_db: Room response (direct path at t=0).
         channels: Output channel count (channels differ only by their noise).
         dtype: ``float32`` or ``int16``.
+        gimbal_db: Level of gimbal motor, wind and handling noise relative to the captured signal (None: none).
     """
     rng = np.random.default_rng(seed)
     n = int(round(duration_s * rate))
@@ -289,6 +314,8 @@ def record(
     x *= 10 ** (gain_db / 20.0)
 
     sig_rms = float(np.std(x)) if len(x) else 0.0
+    if gimbal_db is not None and n:
+        x = x + gimbal_noise(n, rate, rng) * sig_rms * 10 ** (gimbal_db / 20.0)
     out = np.empty((n, channels))
     for ch in range(channels):
         noise = rng.standard_normal(n) * sig_rms * 10 ** (-snr_db / 20.0) if snr_db is not None else 0.0

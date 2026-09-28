@@ -41,6 +41,14 @@ function installBridge(handlers: Partial<Record<Method, Handler>>): unknown[][] 
     pathForFile: () => "",
     readPeaks: async () => new Uint8Array(),
     readThumbnail: async () => new Uint8Array(),
+    preview: {
+      caps: async () => ({ hwaccels: [], ffmpeg: "ffmpeg", videoDecode: "enabled" }),
+      frame: async () => null,
+      open: async () => "s1",
+      at: async () => null,
+      close: async () => undefined,
+      audio: async () => null,
+    },
     mediaUrl: (file: string) => `syncora-media://media/${encodeURIComponent(file)}`,
     platform: "test",
   };

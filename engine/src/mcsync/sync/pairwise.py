@@ -40,6 +40,11 @@ _MIN_VERIFIED_INLIERS = 3
 #: ``_EARLY_ABORT_MIN_INLIERS`` agreeing ones: a true match agrees almost everywhere.
 _EARLY_ABORT_WINDOWS = 4
 _EARLY_ABORT_MIN_INLIERS = 3
+#: Searches at most this wide (seconds) verify their best candidates whatever their coarse PSR: a few seconds of
+#: envelope correlogram hold too few lags for a meaningful PSR, so the fine stage (GCC-PHAT windows agreeing to the
+#: millisecond, with a prominent peak) is what decides. Wrong windows give no inliers there (see docs/SYNC_ENGINE.md).
+_NARROW_SEARCH_S = 10.0
+_NARROW_REFINE_PSR = 0.0
 
 
 @dataclass(frozen=True)
@@ -71,6 +76,7 @@ class _FineResult:
     n_inliers: int
     correlation: float
     windows: tuple[WindowMeasurement, ...]
+    prominence: float = 0.0
 
     @property
     def inlier_fraction(self) -> float:
@@ -106,14 +112,17 @@ def estimate_offset(
     if not peaks:
         return _no_match((Flag.NO_OVERLAP,))
     best_psr = peaks[0].psr
-    if best_psr < params.detection_psr:
+    # Inside a narrow window (a calibrated clock's prediction) the fine stage verifies the best candidates.
+    narrow = search is not None and search[1] - search[0] <= _NARROW_SEARCH_S
+    refine_psr = min(params.refine_psr, _NARROW_REFINE_PSR) if narrow else params.refine_psr
+    if best_psr < refine_psr:
         return _no_match(
             (Flag.NO_CORRELATION,),
             coarse_psr=best_psr,
             alternatives=tuple(Candidate(p.offset_s, p.psr) for p in peaks),
         )
 
-    gate = max(params.detection_psr, params.candidate_ratio * best_psr)
+    gate = max(refine_psr, params.candidate_ratio * best_psr)
     refined: list[tuple[_CoarsePeak, _FineResult]] = []
     for peak in peaks[: params.max_candidates]:
         if peak.psr < gate:
@@ -123,6 +132,12 @@ def estimate_offset(
             refined.append((peak, fine))
     if not refined:
         return _no_match((Flag.SILENT_OVERLAP,), coarse_psr=best_psr)
+    if best_psr < params.detection_psr and max(f.n_inliers for _, f in refined) < _MIN_VERIFIED_INLIERS:
+        return _no_match(
+            (Flag.NO_CORRELATION,),
+            coarse_psr=best_psr,
+            alternatives=tuple(Candidate(p.offset_s, p.psr) for p in peaks),
+        )
 
     refined.sort(key=lambda pf: pf[1].rank, reverse=True)
     chosen_peak, fine = refined[0]
@@ -141,6 +156,7 @@ def estimate_offset(
         ambiguous=ambiguous,
         params=params,
         correlation=fine.correlation if fine.n_inliers >= _MIN_VERIFIED_INLIERS else None,
+        prominence=fine.prominence,
     )
     drift_ppm = -fine.slope * 1e6 if fine.slope else 0.0
     drift_std_ppm = fine.slope_std * 1e6
@@ -148,7 +164,8 @@ def estimate_offset(
     flags: list[Flag] = []
     if ambiguous:
         flags.append(Flag.AMBIGUOUS)
-    if fine.n_inliers >= _MIN_VERIFIED_INLIERS and fine.correlation < WEAK_CORRELATION:
+    if (fine.n_inliers >= _MIN_VERIFIED_INLIERS and fine.correlation < WEAK_CORRELATION
+            and fine.prominence < params.same_sound_prominence):  # fmt: skip
         flags.append(Flag.WEAK_CORRELATION)
     if fine.n_valid < _MIN_VERIFIED_INLIERS:
         flags.append(Flag.UNVERIFIED)
@@ -188,6 +205,7 @@ def estimate_offset(
         flags=tuple(flags),
         windows=fine.windows,
         alternatives=alternatives,
+        prominence=fine.prominence,
     )
 
 
@@ -218,8 +236,25 @@ def _coarse_peaks(
     params: SyncParams,
     search: tuple[float, float] | None,
 ) -> list[_CoarsePeak]:
+    """Candidate offsets from both coarse features (loudness contour, and the noise-robust band envelope), best
+    first. A candidate either feature finds goes to the fine stage, which decides."""
+    loud = _feature_peaks(ref.envelope(params), tgt.envelope(params), params, search)
+    bands = _feature_peaks(ref.band_envelope(params), tgt.band_envelope(params), params, search)
+    exclusion = params.peak_exclusion_s
+    merged: list[_CoarsePeak] = []
+    for p in sorted(loud + bands, key=lambda p: -p.psr):
+        if all(abs(p.offset_s - q.offset_s) > exclusion for q in merged):
+            merged.append(p)
+    return merged[: params.max_candidates + 1]
+
+
+def _feature_peaks(
+    env_r: np.ndarray,
+    env_t: np.ndarray,
+    params: SyncParams,
+    search: tuple[float, float] | None,
+) -> list[_CoarsePeak]:
     fr = params.feature_rate
-    env_r, env_t = ref.envelope(params), tgt.envelope(params)
     n_r, n_t = len(env_r), len(env_t)
     min_overlap = max(1, int(np.ceil(params.min_overlap_s * fr)))
     if min(n_r, n_t) < min_overlap:
@@ -303,23 +338,29 @@ def _refine(ref: AnalysisSignal, tgt: AnalysisSignal, coarse_offset_s: float, pa
 
     silence = 10.0 ** (params.window_silence_db / 20.0)
     band = (params.band_low_hz, params.band_high_hz)
-    times, lags, rhos = [], [], []
+    # The lag is measured within `radius` of the candidate; the correlogram spans `wide` so the peak's prominence
+    # over it can be measured too.
+    wide = max(radius, int(np.ceil(fs * params.prominence_radius_s)))
+    times, lags, rhos, proms = [], [], [], []
     # Spread-out visiting order: a wrong candidate is abandoned after a few
     # windows, and those few already span the overlap.
     for w in _spread_order(len(starts)):
         tb = int(starts[w])
         seg_t = np.asarray(b[tb : tb + win], dtype=np.float32)
-        seg_r = _padded_slice(a, tb + lag0 - radius, win + 2 * radius)
-        if _rms(seg_t) < silence or _rms(seg_r[radius : radius + win]) < silence:
+        seg_r = _padded_slice(a, tb + lag0 - wide, win + 2 * wide)
+        if _rms(seg_t) < silence or _rms(seg_r[wide : wide + win]) < silence:
             continue
-        corr, _ = cross_correlation(
-            seg_r, seg_t, min_lag=0, max_lag=2 * radius, phat_beta=params.phat_beta, band=band, rate=fs
+        full, _ = cross_correlation(
+            seg_r, seg_t, min_lag=0, max_lag=2 * wide, phat_beta=params.phat_beta, band=band, rate=fs
         )
+        corr = full[wide - radius : wide + radius + 1]
         i = int(np.argmax(corr))
         k, _ = parabolic_peak(corr, i)
+        med, spread = robust_z(full)
         times.append((tb + win / 2.0) / fs)
         lags.append((lag0 - radius + k) / fs)
-        rhos.append(pearson(seg_r[i : i + win], seg_t))
+        rhos.append(pearson(seg_r[wide - radius + i : wide - radius + i + win], seg_t))
+        proms.append((float(corr[i]) - med) / spread)
         if len(lags) == _EARLY_ABORT_WINDOWS and len(starts) > _EARLY_ABORT_WINDOWS:
             probe = _fit_lag_line(np.array(times), np.array(lags), params, fs)
             if probe.inliers.sum() < _EARLY_ABORT_MIN_INLIERS:
@@ -331,11 +372,13 @@ def _refine(ref: AnalysisSignal, tgt: AnalysisSignal, coarse_offset_s: float, pa
 
     by_time = np.argsort(times)
     t, y, rho = np.array(times)[by_time], np.array(lags)[by_time], np.array(rhos)[by_time]
+    prom = np.array(proms)[by_time]
     fit = _fit_lag_line(t, y, params, fs)
     windows = tuple(
-        WindowMeasurement(time_s=float(ti), lag_s=float(yi), correlation=float(ri), inlier=bool(ok))
-        for ti, yi, ri, ok in zip(t, y, rho, fit.inliers, strict=True)
-    )
+        WindowMeasurement(time_s=float(ti), lag_s=float(yi), correlation=float(ri), inlier=bool(ok),
+                          prominence=round(float(pi), 2))
+        for ti, yi, ri, ok, pi in zip(t, y, rho, fit.inliers, prom, strict=True)
+    )  # fmt: skip
     n_in = int(fit.inliers.sum())
     return _FineResult(
         offset_s=fit.intercept + fit.slope * t_mid,
@@ -348,6 +391,7 @@ def _refine(ref: AnalysisSignal, tgt: AnalysisSignal, coarse_offset_s: float, pa
         n_inliers=n_in,
         correlation=float(np.median(rho[fit.inliers])) if n_in else 0.0,
         windows=windows,
+        prominence=float(np.median(prom[fit.inliers])) if n_in else 0.0,
     )
 
 

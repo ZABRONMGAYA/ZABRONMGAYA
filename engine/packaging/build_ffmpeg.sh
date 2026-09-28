@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
-# Builds the FFmpeg that ships inside Syncora: one pinned release on every platform, LGPL, decode only.
+# Builds the FFmpeg that ships inside Syncora: one pinned release on every platform, LGPL, decode only (plus small
+# JPEG preview frames).
 #
 #   packaging/build_ffmpeg.sh OUTPUT_DIR
 #
 # The same version everywhere matters: FFmpeg releases disagree about some edge-list timings, which would move clips.
-# Decode only: no encoders except the PCM the engine reads its analysis audio as and raw pixels for thumbnails,
-# so originals can never be re-encoded. LGPL 2.1+: no GPL or non-free parts, statically linked, with the licence and this recipe alongside.
+# Decode only: no encoders except the PCM the engine reads its analysis audio as, raw pixels for thumbnails and JPEG
+# for the multicamera preview's frames (small pictures shown on screen, never written next to the media), so
+# originals can never be re-encoded. Hardware decoding (VideoToolbox on macOS, D3D11VA/DXVA2 on Windows) serves the
+# preview; FFmpeg falls back to the processor when a codec or computer cannot use it. LGPL 2.1+: no GPL or non-free parts, statically linked, with the licence and this recipe alongside.
 # Needs git, a C compiler, make and nasm (macOS: Xcode tools + brew nasm; Windows: MSYS2 MinGW64).
 set -euo pipefail
 
@@ -29,19 +32,21 @@ FLAGS=(
   --disable-autodetect --enable-zlib       # no system libraries picked up by accident (zlib: compressed MOV headers)
   --enable-static --disable-shared
   --disable-programs --enable-ffmpeg --enable-ffprobe
-  --disable-doc --disable-network --disable-devices --disable-hwaccels
-  --disable-encoders --enable-encoder=pcm_f32le,pcm_s16le,rawvideo
-  --disable-muxers --enable-muxer=pcm_f32le,wav,null,rawvideo   # "-f f32le" is the pcm_f32le muxer
+  --disable-doc --disable-network --disable-devices
+  --disable-encoders --enable-encoder=pcm_f32le,pcm_s16le,rawvideo,mjpeg
+  --disable-muxers --enable-muxer=pcm_f32le,wav,null,rawvideo,image2pipe   # "-f f32le" is the pcm_f32le muxer
   --disable-debug
 )
 EXE=""
 case "$(uname -s)" in
   Darwin)
     FLAGS+=(--extra-cflags=-mmacosx-version-min=12.0 --extra-ldflags=-mmacosx-version-min=12.0)
+    FLAGS+=(--enable-videotoolbox)       # Apple's hardware decoders (H.264, HEVC, ProRes)
     JOBS="$(sysctl -n hw.ncpu)"
     ;;
   MINGW* | MSYS*)
     FLAGS+=(--extra-ldflags=-static)       # no MinGW runtime DLLs next to the executables
+    FLAGS+=(--enable-d3d11va --enable-dxva2)  # Direct3D hardware decoding (NVIDIA, AMD, Intel)
     EXE=".exe"
     JOBS="$(nproc)"
     ;;
@@ -62,11 +67,12 @@ require() {  # require KIND NAME...: each NAME must appear in `ffmpeg -KIND`
     grep -Eq "^ *[A-Z.|-]+ +$name( |,|$)" <<<"$listing" || { echo "FFmpeg build lacks $kind $name" >&2; exit 1; }
   done
 }
-require muxers f32le rawvideo
-require encoders pcm_f32le rawvideo
+require muxers f32le rawvideo image2pipe
+require encoders pcm_f32le rawvideo mjpeg
 require filters aresample pan scale
 require demuxers mov,mp4,m4a,3gp,3g2,mj2 mpegts wav w64 aiff mp3 flac matroska,webm avi mxf ogg
 require decoders aac ac3 eac3 mp3 flac alac opus vorbis pcm_s16le pcm_s24le pcm_s32le pcm_f32le h264 hevc prores
+echo "Hardware decoding: $("./ffmpeg$EXE" -hide_banner -hwaccels | tail -n +2 | tr '\n' ' ')"
 
 cp "ffmpeg$EXE" "ffprobe$EXE" "$OUT/"
 cp COPYING.LGPLv2.1 "$OUT/LICENSE-FFmpeg.txt"

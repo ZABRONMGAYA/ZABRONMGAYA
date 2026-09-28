@@ -9,7 +9,7 @@ from fractions import Fraction
 import numpy as np
 from scipy import signal as sps
 
-from .features import log_energy_envelope
+from .features import band_envelope, log_energy_envelope
 from .params import DEFAULT_PARAMS, SyncParams
 
 #: Memory maps of cache files, shared by every signal of this process and bounded: each open map holds a file
@@ -135,6 +135,28 @@ class AnalysisSignal:
                 feature_rate=params.feature_rate,
                 floor_db=params.envelope_floor_db,
                 detrend_s=params.envelope_detrend_s,
+            )
+            cache[key] = env
+        return env
+
+    def band_envelope(self, params: SyncParams = DEFAULT_PARAMS) -> np.ndarray:
+        """The noise-robust coarse feature (see :func:`features.band_envelope`), cached like ``envelope``."""
+        key = ("bands", params.feature_rate, params.band_env_low_hz, params.band_env_high_hz, params.band_env_bands,
+               params.band_env_detrend_s)  # fmt: skip
+        if self._source is not None:
+            samples, cache = _shared_map(self._source)
+        else:
+            samples, cache = self.samples, self._envelopes
+        env = cache.get(key)
+        if env is None:
+            env = band_envelope(
+                samples,
+                self.rate,
+                feature_rate=params.feature_rate,
+                low_hz=params.band_env_low_hz,
+                high_hz=min(params.band_env_high_hz, 0.45 * self.rate),
+                bands=params.band_env_bands,
+                detrend_s=params.band_env_detrend_s,
             )
             cache[key] = env
         return env

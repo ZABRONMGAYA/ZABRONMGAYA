@@ -31,6 +31,8 @@ from pathlib import Path
 
 import numpy as np
 
+from mcsync.resources import safe_process_workers
+
 from .media import SHOOT_DATE, run_ffmpeg
 from .synthetic import Scene, make_scene, record
 
@@ -227,7 +229,7 @@ def generate_production(
     if plan.problems:
         _add_problems(prod, jobs, scene_jobs, rng)
 
-    with ProcessPoolExecutor(workers or os.cpu_count() or 2) as pool:
+    with ProcessPoolExecutor(safe_process_workers(workers or os.cpu_count() or 2)) as pool:
         missing_scenes = [j for j in scene_jobs if not Path(j[0]).is_file()]
         list(pool.map(_render_scene, *zip(*missing_scenes, strict=True))) if missing_scenes else None
         todo = [j for j in jobs if not Path(j["path"]).is_file()]

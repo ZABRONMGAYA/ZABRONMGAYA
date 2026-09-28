@@ -871,6 +871,33 @@ export interface RpcFailure {
 
 export type InvokeResponse<T> = { ok: true; result: T } | { ok: false; error: RpcFailure };
 
+export interface PreviewCaps {
+  /** Hardware decoders FFmpeg can use on this computer (videotoolbox, d3d11va, dxva2, cuda, vaapi…). */
+  hwaccels: string[];
+  ffmpeg: string;
+  /** Chromium's own video decoding: "enabled" (hardware) or "disabled_software"… */
+  videoDecode: string;
+}
+
+export interface PreviewBridge {
+  caps(): Promise<PreviewCaps>;
+  /** One JPEG of `path` at source time `t`, `height` px high; a newer request for the same `slot` replaces it. */
+  frame(path: string, t: number, height: number, slot: string): Promise<Uint8Array | null>;
+  /** Start decoding `path` from `start` at `fps` frames per second; returns a stream id. */
+  open(path: string, start: number, fps: number, height: number): Promise<string>;
+  /** The stream's JPEG for source time `t`; null: not decoded yet; "reopen": `t` is out of this stream's reach. */
+  at(id: string, t: number): Promise<Uint8Array | null | "reopen">;
+  close(id: string): Promise<void>;
+  /** Interleaved stereo float32 PCM of `seconds` from `start` (stream: absolute index, null: the first audio). */
+  audio(
+    path: string,
+    start: number,
+    seconds: number,
+    rate: number,
+    stream: number | null,
+  ): Promise<Float32Array | null>;
+}
+
 /** What the preload script exposes as `window.mcsync`. */
 export interface Bridge {
   /** Resolves with an envelope; `api/client.ts` turns failures into EngineError. */
@@ -896,6 +923,8 @@ export interface Bridge {
   readThumbnail(path: string): Promise<Uint8Array>;
   /** A URL the <video> element can stream a project's media file from (seekable). */
   mediaUrl(path: string): string;
+  /** Pictures and sound of project media decoded by FFmpeg, for what Chromium cannot play (multicamera preview). */
+  preview: PreviewBridge;
   /** Bytes [offset, offset + length) of a waveform file inside the analysis cache. */
   readPeaks(directory: string, file: string, offset: number, length: number): Promise<Uint8Array>;
   platform: string;
