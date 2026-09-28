@@ -141,7 +141,7 @@ export class PreviewServer {
    * (a camera window) replace each other while waiting: scrubbing asks for the latest position only. */
   async frame(file: string, t: number, height: number, slot: string): Promise<Buffer | null> {
     const full = this.check(file);
-    const key = `${full}|${height}|${Math.round(t * 25)}`;
+    const key = `${full}|${height}|${Math.round(t * 10000)}`; // the player asks for frame starts
     const cached = this.frames.get(key);
     if (cached) return cached;
     return new Promise((resolve) => {
@@ -170,7 +170,7 @@ export class PreviewServer {
     const args = [
       "-hide_banner", "-v", "error", "-nostdin",
       ...(hw ? this.hwArgs(file) : []),
-      "-ss", Math.max(0, t).toFixed(3), "-i", file,
+      "-ss", Math.max(0, t).toFixed(4), "-i", file,
       "-frames:v", "1", "-an", "-sn", "-dn",
       "-vf", `scale=-2:${height}:flags=bilinear`,
       "-f", "image2pipe", "-c:v", "mjpeg", "-q:v", "5", "pipe:1",
@@ -201,7 +201,7 @@ export class PreviewServer {
     const args = [
       "-hide_banner", "-v", "error", "-nostdin",
       ...this.hwArgs(full),
-      "-ss", Math.max(0, start).toFixed(3), "-i", full,
+      "-ss", Math.max(0, start).toFixed(4), "-i", full,
       "-an", "-sn", "-dn",
       "-vf", `fps=${fps},scale=-2:${height}:flags=bilinear`,
       "-f", "image2pipe", "-c:v", "mjpeg", "-q:v", "6", "pipe:1",

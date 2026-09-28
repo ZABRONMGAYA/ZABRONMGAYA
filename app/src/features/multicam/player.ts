@@ -12,9 +12,11 @@ export type PlayerMode = "native" | "frames" | "none";
 const nativeFailed = new Set<string>();
 
 /** Seek instead of steering when the picture is this far off the clock (seconds). */
-const SEEK_S = 0.3;
-/** Steering gain: playback rate correction per second of error (bounded to ±10 %). */
-const GAIN = 0.8;
+const SEEK_S = 0.2;
+/** Steering gain: playback rate correction per second of error, bounded to ±25 % (the picture is muted, so a
+ * brief speed change is not heard; 100 ms of error is gone in half a second). */
+const GAIN = 2;
+const MAX_CORRECTION = 0.25;
 
 export interface PlayerSettings {
   /** Native decoding when possible (false: FFmpeg frames at `height`). */
@@ -162,13 +164,17 @@ export class TilePlayer {
       if (Math.abs(err) > SEEK_S) {
         if (!v.seeking) v.currentTime = Math.max(0, t + 0.05); // lead the clock by the time a seek takes
       } else {
-        v.playbackRate = Math.min(rate * 1.1, Math.max(rate * 0.9, rate * (1 - err * GAIN)));
+        const correction = Math.max(-MAX_CORRECTION, Math.min(MAX_CORRECTION, -err * GAIN));
+        v.playbackRate = rate * (1 + correction);
       }
       if (v.paused) void v.play().catch(() => undefined);
     } else {
-      if (!v.paused) v.pause();
+      const stopping = !v.paused;
+      if (stopping) v.pause();
+      // Stopping: always seek once, so the picture is the frame at t (a paused <video> keeps the last frame it
+      // presented, which can be ahead of its position after steering); afterwards, only when it is off.
       const frame = 1 / (this.clipFps() || 25);
-      if (Math.abs(err) > frame / 2 && !v.seeking) v.currentTime = Math.max(0, t);
+      if ((stopping || Math.abs(err) > frame / 2) && !v.seeking) v.currentTime = Math.max(0, t);
     }
   }
 
@@ -189,13 +195,15 @@ export class TilePlayer {
     const clip = this.clip!;
     if (!playing) {
       this.closeStream();
-      const frame = 1 / (this.clipFps() || 25);
-      if (Math.abs(t - this.shownT) < frame / 2) return;
+      // The frame a <video> shows at t: the one whose display interval contains t (its start on the clip's grid).
+      const fps = this.clipFps() || 25;
+      const tq = Math.floor(t * fps + 1e-6) / fps;
+      if (tq === this.shownT) return;
       if (this.pending) {
-        this.wantT = t;
+        this.wantT = tq;
         return;
       }
-      this.request(bridge().preview.frame(clip.path, t, this.settings.height, this.slot), t);
+      this.request(this.exactFrame(clip, tq), tq);
       return;
     }
     if (!this.stream || this.stream.path !== clip.path) {
@@ -232,8 +240,7 @@ export class TilePlayer {
         if (jpeg) void this.draw(jpeg, t);
         const next = this.wantT;
         this.wantT = null;
-        if (next !== null && clip)
-          this.request(bridge().preview.frame(clip.path, next, this.settings.height, this.slot), next);
+        if (next !== null && clip) this.request(this.exactFrame(clip, next), next);
       },
       () => {
         this.pending = false;
@@ -262,10 +269,17 @@ export class TilePlayer {
       );
   }
 
+  /** FFmpeg's picture of the frame starting at `frameStart`: it outputs the first frame at or after the requested
+   * time, so ask half a millisecond early (frame times such as 1001/30000 s are not exact decimals). */
+  private exactFrame(clip: TimelineClip, frameStart: number): Promise<Uint8Array | null> {
+    return bridge().preview.frame(clip.path, Math.max(0, frameStart - 0.0005), this.settings.height, this.slot);
+  }
+
   private closeStream(): void {
     const s = this.stream;
     this.stream = null;
     this.pending = false;
+    if (s) this.shownT = Number.NaN; // a streamed picture can be a frame behind: fetch the exact one when paused
     if (s && s.id) void bridge().preview.close(s.id);
   }
 

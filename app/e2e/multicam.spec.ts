@@ -40,8 +40,15 @@ async function shot(name: string): Promise<void> {
 
 /** The scene frame each camera window shows (null: no picture), read from the 16-bit pattern atop every frame. */
 async function sceneFrames(): Promise<Record<string, number | null>> {
+  const read = await sceneFramesAt();
+  return Object.fromEntries(Object.entries(read).map(([k, v]) => [k, v && v.frame]));
+}
+
+/** Each camera window's scene frame and the master clock's time at the moment it was read (while playing, the
+ * windows are read one after another: each is compared with the clock at its own reading). */
+async function sceneFramesAt(): Promise<Record<string, { frame: number; at: number } | null>> {
   return page.evaluate(() => {
-    const out: Record<string, number | null> = {};
+    const out: Record<string, { frame: number; at: number } | null> = {};
     const probe = document.createElement("canvas");
     probe.width = 320;
     probe.height = 180;
@@ -60,13 +67,14 @@ async function sceneFrames(): Promise<Record<string, number | null>> {
         continue;
       }
       ctx.clearRect(0, 0, 320, 180);
+      const at = window.mcsyncMulticam!.clock.now();
       ctx.drawImage(source, 0, 0, 320, 180);
       let n = 0;
       for (let k = 0; k < 16; k++) {
         const px = ctx.getImageData(Math.floor((k + 0.5) * 20), 20, 1, 1).data;
         if (px[0]! > 128) n |= 1 << k;
       }
-      out[name] = n === 0 ? null : n; // black: no picture yet (scene frame 0 is never asked for)
+      out[name] = n === 0 ? null : { frame: n, at }; // black: no picture yet (scene frame 0 is never asked for)
     }
     return out;
   });
@@ -298,16 +306,23 @@ test("1-3 · plays every camera in sync, the ProRes camera through FFmpeg", asyn
   const tc0 = await page.getByTestId("master-timecode").textContent();
   await page.getByTestId("play").click();
   await page.waitForTimeout(2500);
-  const moving = await sceneFrames();
+  const moving = await sceneFramesAt();
+  const zoomAt = (await timelineStarts())[ZOOM]!;
   // Pictures per second each camera window showed over the last second of playback (reported, not asserted:
   // it depends on the machine; CI runners draw without a GPU).
   console.log("PREVIEW", JSON.stringify(await page.evaluate(() => window.mcsyncMulticam!.tiles())));
   await page.getByTestId("play").click();
   const t1 = await clockNow();
   expect(t1 - master).toBeGreaterThan(1.5);
-  const values = Object.values(moving).filter((v): v is number => v !== null);
-  expect(Math.max(...values) - Math.min(...values), JSON.stringify(moving)).toBeLessThanOrEqual(4);
-  expect(Math.min(...values)).toBeGreaterThan(expectedFrame + 25);
+  // While playing, every picture is within a few frames of the clock (the pictures a runner without a GPU
+  // composites lag by up to a refresh; paused, below, they must agree to the frame).
+  const errors = Object.entries(moving)
+    .filter((e): e is [string, { frame: number; at: number }] => e[1] !== null)
+    .map(([name, v]) => [name, v.frame - Math.round((v.at - zoomAt + truth[ZOOM]!.start) * 25)] as const);
+  expect(errors.length, JSON.stringify(moving)).toBeGreaterThanOrEqual(3);
+  for (const [name, err] of errors)
+    expect(Math.abs(err), `${name} while playing: ${JSON.stringify(errors)}`).toBeLessThanOrEqual(3);
+  expect(Math.min(...errors.map(([name]) => moving[name]!.frame))).toBeGreaterThan(expectedFrame + 25);
   await expectInSync(1, 3);
   expect(await page.getByTestId("master-timecode").textContent()).not.toBe(tc0); // 4: the timecode follows
 

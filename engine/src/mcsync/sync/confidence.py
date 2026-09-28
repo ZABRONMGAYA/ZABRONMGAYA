@@ -73,6 +73,11 @@ def match_confidence(
         score = min(score, AMBIGUOUS_CAP)
     if correlation is not None and correlation < WEAK_CORRELATION and prominence < params.same_sound_prominence:
         score = min(score, AMBIGUOUS_CAP)
+    if coarse_psr < params.detection_psr and prominence < params.same_sound_prominence:
+        # Windows that agree are not enough on their own: without a clear coarse peak or a prominent fine peak they
+        # can agree on a strong room reflection (a consistent lag a few tens of milliseconds off) or a beat grid.
+        # Measured on the 4,238-file production: three such matches were placed 20-34 ms off at 0.70.
+        score = min(score, AMBIGUOUS_CAP)
     return float(np.clip(score, 0.0, 1.0))
 
 

@@ -108,13 +108,31 @@ def estimate_offset(
     if ref.is_silent(params) or tgt.is_silent(params):
         return _no_match((Flag.SILENT,))
 
-    peaks = _coarse_peaks(ref, tgt, params, search)
+    # Two passes: the loudness contour with clear detections only (most pairs are found here, at 1.2's cost), then,
+    # when that is not a clear confident match, both coarse features and weaker candidates (noisy cameras).
+    quick = _estimate(ref, tgt, params, search, bands=False)
+    if quick.status == MatchStatus.CONFIDENT and quick.coarse_psr >= params.detection_psr:
+        return quick
+    return _estimate(ref, tgt, params, search, bands=True)
+
+
+def _estimate(
+    ref: AnalysisSignal,
+    tgt: AnalysisSignal,
+    params: SyncParams,
+    search: tuple[float, float] | None,
+    *,
+    bands: bool,
+) -> OffsetEstimate:
+    peaks = _coarse_peaks(ref, tgt, params, search, bands=bands)
     if not peaks:
         return _no_match((Flag.NO_OVERLAP,))
     best_psr = peaks[0].psr
     # Inside a narrow window (a calibrated clock's prediction) the fine stage verifies the best candidates.
     narrow = search is not None and search[1] - search[0] <= _NARROW_SEARCH_S
     refine_psr = min(params.refine_psr, _NARROW_REFINE_PSR) if narrow else params.refine_psr
+    if not bands and not narrow:
+        refine_psr = params.detection_psr  # the quick pass: clear detections only
     if best_psr < refine_psr:
         return _no_match(
             (Flag.NO_CORRELATION,),
@@ -164,8 +182,11 @@ def estimate_offset(
     flags: list[Flag] = []
     if ambiguous:
         flags.append(Flag.AMBIGUOUS)
-    if (fine.n_inliers >= _MIN_VERIFIED_INLIERS and fine.correlation < WEAK_CORRELATION
-            and fine.prominence < params.same_sound_prominence):  # fmt: skip
+    if (
+        fine.n_inliers >= _MIN_VERIFIED_INLIERS
+        and fine.prominence < params.same_sound_prominence
+        and (fine.correlation < WEAK_CORRELATION or chosen_peak.psr < params.detection_psr)
+    ):
         flags.append(Flag.WEAK_CORRELATION)
     if fine.n_valid < _MIN_VERIFIED_INLIERS:
         flags.append(Flag.UNVERIFIED)
@@ -235,10 +256,13 @@ def _coarse_peaks(
     tgt: AnalysisSignal,
     params: SyncParams,
     search: tuple[float, float] | None,
+    bands: bool = True,
 ) -> list[_CoarsePeak]:
     """Candidate offsets from both coarse features (loudness contour, and the noise-robust band envelope), best
     first. A candidate either feature finds goes to the fine stage, which decides."""
     loud = _feature_peaks(ref.envelope(params), tgt.envelope(params), params, search)
+    if not bands:
+        return loud[: params.max_candidates + 1]
     bands = _feature_peaks(ref.band_envelope(params), tgt.band_envelope(params), params, search)
     exclusion = params.peak_exclusion_s
     merged: list[_CoarsePeak] = []

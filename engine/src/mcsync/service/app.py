@@ -73,10 +73,11 @@ from .rpc import APP_ERROR, BUSY, FFMPEG_MISSING, NO_PROJECT, JsonRpcServer, Rpc
 PROTOCOL_VERSION = 2
 #: Keys of clock-window and full-search matches. 3: matches that barely correlate are no longer confident; 4 (1.3):
 #: the noise-robust band envelope finds candidates in noisy cameras and peak prominence tells faint same-sound
-#: matches from beat grids. Pairs stored by earlier versions are verified again.
-MATCH_KEY_VERSION = "4"
-#: Keys of fingerprint-candidate and extended-search matches: independent of the exact window (5: as above).
-STAGED_KEY_VERSION = "5"
+#: matches from beat grids; 5: windows that agree without a clear coarse or fine peak are not confident. Pairs
+#: stored by earlier versions are verified again.
+MATCH_KEY_VERSION = "5"
+#: Keys of fingerprint-candidate and extended-search matches: independent of the exact window (6: as above).
+STAGED_KEY_VERSION = "6"
 #: Recorded with every saved placement (``sync_result.analysis_version``): the engine and matcher that produced it.
 ANALYSIS_VERSION = f"{__version__}+m{MATCH_KEY_VERSION}.s{STAGED_KEY_VERSION}"
 SETTINGS_DEFAULTS: dict[str, Any] = {
