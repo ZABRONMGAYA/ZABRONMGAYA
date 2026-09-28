@@ -427,6 +427,7 @@ def solve_placements(
             flags=tuple(dict.fromkeys(flags)),
             drift_ppm=_ppm(rates[anchor] - rates[k]),
             corroboration=corroboration,
+            anchor_id=clips[anchor].clip_id,
         )
 
     # --- edge reports ------------------------------------------------------------

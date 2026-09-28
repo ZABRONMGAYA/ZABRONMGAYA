@@ -264,6 +264,8 @@ CREATE TABLE sync_point (
 );
 CREATE INDEX sync_point_clip ON sync_point (clip_id);
 ALTER TABLE placement ADD COLUMN analysis_version TEXT;
+"""
+_SYNC_RESULT_VIEW = """
 CREATE VIEW sync_result AS
 SELECT
     c.media_id                                              AS media_id,
@@ -271,7 +273,7 @@ SELECT
     c.device_id                                             AS camera_id,
     c.session_id                                            AS session_id,
     json_extract(p.placement_json, '$.group')               AS sync_group_id,
-    json_extract(pr.settings_json, '$.reference_clip_id')   AS master_reference_id,
+    {master_reference} AS master_reference_id,
     json_extract(p.placement_json, '$.start_s')             AS offset,
     json_extract(p.placement_json, '$.drift_ppm')           AS drift,
     json_extract(p.placement_json, '$.method')              AS method,
@@ -288,15 +290,30 @@ FROM clip c
 JOIN placement p ON p.clip_id = c.id
 CROSS JOIN project pr
 """
+V4_SQL += _SYNC_RESULT_VIEW.replace("{master_reference}", "json_extract(pr.settings_json, '$.reference_clip_id')")
+
+# Version 5: a clip's master reference is the clip its offset is measured from (stored with each placement since
+# 1.3.0: the reference in the main group, the longest clip in another group), not only a reference the user chose.
+V5_SQL = "DROP VIEW sync_result;" + _SYNC_RESULT_VIEW.replace(
+    "{master_reference}",
+    "COALESCE(CAST(json_extract(p.placement_json, '$.anchor_id') AS INTEGER),\n"
+    "             CASE WHEN json_extract(p.placement_json, '$.group') = 0\n"
+    "                  THEN json_extract(pr.settings_json, '$.reference_clip_id') END)",
+)
 
 
-def _migrate_v4(conn: sqlite3.Connection) -> None:
-    for statement in V4_SQL.split(";"):
-        if statement.strip():
-            conn.execute(statement)
+def _run(sql: str) -> Callable[[sqlite3.Connection], None]:
+    def migrate(conn: sqlite3.Connection) -> None:
+        for statement in sql.split(";"):
+            if statement.strip():
+                conn.execute(statement)
+
+    return migrate
 
 
-MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {2: _migrate_v2, 3: _migrate_v3, 4: _migrate_v4}
+MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
+    2: _migrate_v2, 3: _migrate_v3, 4: _run(V4_SQL), 5: _run(V5_SQL)
+}  # fmt: skip
 LATEST = max(MIGRATIONS)
 
 

@@ -194,19 +194,28 @@ def test_json_round_trips():
         to_jsonable(object())
 
 
+def rows_of(project):
+    return {r["clip_id"]: r for r in project.sync_results()}
+
+
 def test_sync_points_and_sync_result_view(project, tmp_path):
-    project.add_media([item(tmp_path / f"{k}.mov") for k in range(2)])
+    project.add_media([item(tmp_path / f"{k}.mov") for k in range(4)])
     placement = ClipPlacement("2", 12.479, 0, PlacementMethod.AUDIO, 0.97, PlacementStatus.SYNCED, (Flag.DRIFT,),
                               12.0, corroboration=2)  # fmt: skip
-    reference = ClipPlacement("1", 0.0, 0, PlacementMethod.REFERENCE, 1.0, PlacementStatus.SYNCED)
-    project.save_placements(SyncResult("1", {"1": reference, "2": placement}, [], []), analysis_version="test-1")
+    reference = ClipPlacement("1", 0.0, 0, PlacementMethod.REFERENCE, 1.0, PlacementStatus.SYNCED, anchor_id="1")
+    # another sync group: measured from its own anchor, not from the project's reference
+    other = ClipPlacement("4", 3.0, 1, PlacementMethod.AUDIO, 0.99, PlacementStatus.SYNCED, anchor_id="3")
+    anchor = ClipPlacement("3", 0.0, 1, PlacementMethod.AUDIO, 0.99, PlacementStatus.SYNCED, anchor_id="3")
+    placements = {"1": reference, "2": placement, "3": anchor, "4": other}
+    project.save_placements(SyncResult("1", placements, [], []), analysis_version="test-1")
+    assert rows_of(project)[4]["master_reference_id"] == 3 and rows_of(project)[1]["master_reference_id"] == 1
+    assert rows_of(project)[2]["master_reference_id"] is None  # saved before anchors were stored, no reference set
     project.update_settings(reference_clip_id=1)
     project.add_correction("offset", 2, other_clip_id=1, offset_s=12.5)
     a = project.add_sync_point(2, 5.0, 17.479)
     project.add_sync_point(2, 50.0, 62.4795)
     assert [p["source_s"] for p in project.sync_points(2)] == [5.0, 50.0]
-    rows = {r["clip_id"]: r for r in project.sync_results()}
-    r = rows[2]
+    r = rows_of(project)[2]
     assert (r["camera_id"], r["sync_group_id"], r["master_reference_id"]) == (project.clip(2).device_id, 0, 1)
     assert r["offset"] == pytest.approx(12.479) and r["drift"] == pytest.approx(12.0)
     assert (r["method"], r["status"], r["confidence"]) == ("audio", "synced", pytest.approx(0.97))

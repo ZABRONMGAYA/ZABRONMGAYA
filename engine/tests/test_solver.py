@@ -148,6 +148,7 @@ def test_disconnected_clips_form_detached_groups():
     x, y = result.placements["X"], result.placements["Y"]
     assert (x.group, y.group) == (1, 1)
     assert (x.start_s, y.start_s) == (0.0, 12.0)  # anchored at X, the longest clip of the group
+    assert (y.anchor_id, result.placements["A"].anchor_id) == ("X", "R")
     assert Flag.DETACHED_GROUP in y.flags
     assert y.status == PlacementStatus.SYNCED  # a separate session, synced within itself
     strict = solve_placements(clips, matches, reference_id="R", params=SolverParams(detached_groups_need_review=True))

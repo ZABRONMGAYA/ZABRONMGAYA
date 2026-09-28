@@ -333,6 +333,8 @@ class ClipPlacement:
     #: Independent confirmation: how many other devices hold this clip through accepted confident audio matches.
     #: Two or more agreeing devices make a placement CONFIRMED rather than merely high confidence.
     corroboration: int = 0
+    #: The clip ``start_s`` is measured from: the reference in group 0, the longest clip in another group.
+    anchor_id: str | None = None
 
 
 @dataclass

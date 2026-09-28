@@ -531,7 +531,7 @@ class AiMethods:
                 continue
             placements[key] = ClipPlacement(key, anchor.start_s + best["offset_s"], anchor.group, PlacementMethod.AI,
                                             float(best["confidence"]), PlacementStatus.NEEDS_REVIEW,
-                                            (Flag.AI_PROPOSAL,))  # fmt: skip
+                                            (Flag.AI_PROPOSAL,), anchor_id=anchor.anchor_id)  # fmt: skip
         return SyncResult(result.reference_id, placements, result.matches, result.edges, result.warnings)
 
 

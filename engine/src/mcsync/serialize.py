@@ -143,6 +143,7 @@ def placement_from_dict(d: dict) -> ClipPlacement:
         flags=tuple(Flag(f) for f in d.get("flags", ())),
         drift_ppm=d.get("drift_ppm", 0.0),
         corroboration=d.get("corroboration", 0),
+        anchor_id=d.get("anchor_id"),
     )
 
 

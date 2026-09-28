@@ -53,8 +53,8 @@ Projects from 1.2 open and are upgraded.
   Adjust, Re-sync, Exclude, Previous and Next.
 - **Statuses:** Confirmed (placed or accepted by you, or two other sources agree), High confidence, Synchronized,
   Review recommended, Manual sync required, Failed, Skipped. The project file keeps each clip's synchronisation in a
-  `sync_result` view (camera, session, group, reference, offset, drift, method, confidence, evidence, status, manual
-  adjustment, sync points, analysis version, time).
+  `sync_result` view (camera, session, group, the reference its offset is measured from, offset, drift, method,
+  confidence, evidence, status, manual adjustment, sync points, analysis version, time).
 - **Acceptance test** of the preview (four cameras including a ProRes one and a noisy gimbal, two recorders, known
   offsets, a clip without sound): every camera window is read back and checked to show the same scene frame.
 
