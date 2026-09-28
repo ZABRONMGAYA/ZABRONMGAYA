@@ -1,4 +1,4 @@
-# Syncora 1.1 — scalability test report
+# Syncora scalability test report (1.1, re-run with 1.3)
 
 **Date:** 27 September 2026
 **Engine:** Syncora 1.1.0, commit `dd92d71`. Later commits change only the pipeline's pause guard, the interface and tests.
@@ -7,6 +7,47 @@ The editing timings in §8 are from Syncora 1.1.1, which made corrections faster
 
 Everything below was measured, with three exceptions. Where a number is an estimate, it says so. Section 13 lists
 what has **not** been tested. Every test can be re-run with the commands in §14.
+
+## 0. Syncora 1.3 re-run (28 September 2026)
+
+The same 4,238-file production (§3), the same 4-core machine (§2), run again with the Syncora 1.3 engine (commit
+`659a88e`: noise-robust band envelope, peak prominence, clock anchoring, the confidence cap and two-pass matching
+of §6 in docs/SYNC_ENGINE.md). Measured with `python -m mcsync.testing.stress` (§14), which also pauses the analysis,
+quits in the middle of it, reopens and synchronises again.
+
+| | 1.1 | 1.3 |
+|---|---|---|
+| Files that should synchronise, placed exactly (within 20 ms) | 4,100 of 4,200 | **4,199 of 4,200** |
+| Scratch-microphone cameras at music sessions | 100 kept in their own group | 500 of 500 placed exactly |
+| Placed as synchronised but wrong (false matches) | 0 | **0** |
+| Placed off and flagged for review | 0 | 1 (20.4 ms; the solver met conflicting matches) |
+| Results: synchronised (confirmed / high / other) | 4,002 | 4,153 (4,138 / 10 / 5) |
+| Results: review / manual / failed / skipped | 103 / 120 / 5 / 5 | 52 / 20 / 5 / 5 |
+| Silent or sound-less clips (20) | manual sync | manual sync (none placed by audio) |
+| Footage from another event (5) | review | review |
+| Median / 99th percentile / worst placement error | 0.005 / 0.99 / 10.8 ms | 0.006 / 1.06 / 20.4 ms (the flagged clip) |
+| Confidence of automatically synchronised clips | — | mean 1.00, median 1.00, lowest 0.88 |
+| Candidate pairs verified | 26,384 of 8.9 million | 26,388 |
+| Analysis (4,230 clips) | 16 min 32 s | 11 min 25 s (media in the disk cache; not an engine change) |
+| Candidate planning | 4 min 35 s | 6 min 13 s |
+| Matching | 3 min 1 s | 5 min 20 s |
+| Extended search, clock anchoring, placement | 25 s | 1 min 9 s |
+| Empty project to finished sync | 24 min 23 s | 24 min 6 s |
+| Whole run (with reopen and a second sync) | 26 min 7 s | 26 min 7 s |
+| Peak memory (engine and workers) | 3.6 GB | 3.8 GB |
+| Processor | 72 % of 4 cores | 75 % of 4 cores; graphics processor not used |
+
+What the first 1.3 run found, and what was changed before this one:
+
+* **Three confident placements 20–34 ms off.** A far camera's windows agreed on a strong room reflection, with no
+  clear coarse peak (PSR 4.8) and no prominent fine peak (10.6), and scored 0.70. Agreeing windows alone are now
+  capped as uncertain. After the change: none.
+* **Matching 4.3× slower than 1.1** (12 min 51 s), because every pair was searched with both coarse features and
+  weaker candidates. Pairs are now matched in two passes (the 1.1 search first, the noise-robust one only when that
+  is not clear). After the change: 5 min 20 s, 1.8× 1.1's time, for 99 more placements and 100 fewer manual syncs.
+
+Planning took 6 min 13 s in both 1.3 runs against 4 min 35 s in 1.1; its code did not change, and the difference
+was not investigated further.
 
 ## 1. Summary
 

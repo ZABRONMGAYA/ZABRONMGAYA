@@ -26,7 +26,8 @@ Projects from 1.2 open and are upgraded.
 
   Measured on the multicamera benchmark (known offsets, `python -m mcsync.testing.multicam`): gimbal clips
   auto-synced 54 → 60 of 60 (standard) and 0 → 43 of 60 (hard: 12 of the 17 left have no usable sound), with no
-  false match in either. See docs/SYNC_ENGINE.md §9.1.
+  false match in either. See docs/SYNC_ENGINE.md §9.1. On the 4,238-file production of SCALABILITY_TEST_REPORT.md
+  (§0): 4,199 of 4,200 files placed within 20 ms (1.1: 4,100), no false match, review and manual syncs 223 → 72.
 
 ### Added
 
