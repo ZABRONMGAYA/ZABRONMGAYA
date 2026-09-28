@@ -174,6 +174,7 @@ export function SyncInspector() {
   const offset = anchor ? offsetFrom(clip, anchor) : null;
   const status = statusWord(clip, isReference || isAnchor);
   const clipMatches = matches[clip.clip_id] ?? [];
+  const matchesLoaded = matches[clip.clip_id] !== undefined;
   const excluded = clip.flags.includes("excluded");
   const manual = clip.flags.includes("manual") || clip.method === "manual";
   const tile = active ? stats[active] : undefined;
@@ -262,7 +263,12 @@ export function SyncInspector() {
         )}
       </div>
 
-      {showEvidence && <Evidence clip={clip} matches={clipMatches} />}
+      {showEvidence &&
+        (matchesLoaded || clip.method === "ai" ? (
+          <Evidence clip={clip} matches={clipMatches} />
+        ) : (
+          <div className="sy-si__evidence sy-dim">Loading the matches…</div>
+        ))}
 
       {!isAnchor && (
         <>

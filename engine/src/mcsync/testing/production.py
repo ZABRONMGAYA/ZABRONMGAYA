@@ -153,8 +153,10 @@ def _write_file(job: dict) -> str:
             s = float(job["start"])
             bits = f"255*mod(trunc(((({s:.6f})+T)*25+0.5)/pow(2,trunc(X/(W/16)))),2)"
             label = str(video.get("label", "")).replace(":", " ")
-            vf = (f"geq=lum='if(lt(Y,H*0.22),{bits},48+32*lt(mod(X+Y,64),32))':cb=128:cr=128,"
-                  f"drawtext=text='{label}  %{{pts\\:hms\\:{s:.3f}}}':x=8:y=h*0.62:fontsize=h/8:fontcolor=white")
+            vf = (
+                f"geq=lum='if(lt(Y,H*0.22),{bits},48+32*lt(mod(X+Y,64),32))':cb=128:cr=128,"
+                f"drawtext=text='{label}  %{{pts\\:hms\\:{s:.3f}}}':x=8:y=h*0.62:fontsize=h/8:fontcolor=white"
+            )
             args = ["-f", "lavfi", "-i", f"color=c=black:size={video.get('size', '320x180')}:rate=25:"
                     f"duration={job['duration']}"]  # fmt: skip
         else:
@@ -173,7 +175,16 @@ def _write_file(job: dict) -> str:
         if job.get("timecode"):
             args += ["-timecode", job["timecode"]]
         args += ["-metadata", f"creation_time={job['created']}", str(out)]
-        run_ffmpeg(args, pcm)
+        try:
+            run_ffmpeg(args, pcm)
+        except RuntimeError:
+            if not video:
+                raise
+            # An FFmpeg without drawtext (or without a default font): the frame-number pattern alone, which is
+            # what tests read; the text is only for people looking at the pictures.
+            k = args.index("-vf")
+            args[k + 1] = vf.split(",drawtext=")[0]
+            run_ffmpeg(args, pcm)
     return str(out)
 
 

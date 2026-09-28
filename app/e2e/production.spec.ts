@@ -186,11 +186,26 @@ test("synchronises the production and sorts the results", async () => {
   const toReview = Number((await page.getByTestId("review-queue").locator(".count").textContent())!.replace(/\D/g, ""));
   expect(toReview).toBeLessThan(synced / 2);
   await page.getByTestId("stage-sync").click();
-  // Unsynchronized and review clips open in the media browser, filtered.
-  await page.getByTestId("category-review").click();
-  await expect(page.getByTestId("media-search")).toHaveValue("review");
-  expect(await shownClips()).toBeGreaterThan(0);
-  await page.getByTestId("media-search").fill("");
+  // Review and manual-sync clips open in the media browser, filtered. (Since 1.3 this production usually has
+  // nothing left for review: every clip with usable sound is placed exactly; the clips without are manual.)
+  for (const [category, query] of [
+    ["review", "review"],
+    ["manual", "manual"],
+  ] as const) {
+    const n = Number(
+      (await page.getByTestId(`category-${category}`).locator(".sy-category__n").textContent())!.replace(/,/g, ""),
+    );
+    await page.getByTestId(`category-${category}`).click();
+    await expect(page.getByTestId("media-search")).toHaveValue(query);
+    await expect.poll(shownClips).toBe(n);
+    await page.getByTestId("media-search").fill("");
+    await page.getByTestId("stage-sync").click();
+  }
+  const manual = Number(
+    (await page.getByTestId("category-manual").locator(".sy-category__n").textContent())!.replace(/,/g, ""),
+  );
+  expect(manual).toBe(truth.counts["no-audio"]! + truth.counts["silent"]! + truth.counts["unrelated"]!);
+  await page.getByTestId("stage-media").click(); // where the next steps start
 });
 
 test("keeps both copies of a duplicate when asked", async () => {

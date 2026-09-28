@@ -234,3 +234,36 @@ def test_signals_must_share_the_analysis_rate(speech_scene):
     other = capture(speech_scene, start_s=90.0, duration_s=20.0, params=SyncParams(analysis_rate=16000), rate=16000)
     with pytest.raises(ValueError):
         estimate_offset(ref, other)
+
+
+@pytest.mark.parametrize("seed", [11, 12, 13])
+def test_gimbal_camera_whose_motors_drown_the_room(mixed_scene, mixed_ref, seed):
+    """A short gimbal clip: motors, wind and handling 6 dB above the room, reverberant, band-limited. The band
+    envelope finds it where the broadband loudness contour sees mostly the motors (1.3)."""
+    tgt = capture(
+        mixed_scene,
+        start_s=REF_START + 200.0 + seed,
+        duration_s=18.0,
+        snr_db=6,
+        gimbal_db=6,
+        highpass_hz=150,
+        gain_db=-6,
+        seed=seed,
+    )
+    est = estimate_offset(mixed_ref, tgt)
+    assert est.status == MatchStatus.CONFIDENT
+    assert est.offset_s == pytest.approx(200.0 + seed, abs=HARD_TOL)
+    assert est.prominence >= 15  # the same sound: the fine peak stands out
+
+
+def test_narrow_search_verifies_candidates_only_where_the_sound_agrees(mixed_scene, mixed_ref):
+    """Clock anchoring searches ±1.5 s around a camera clock's prediction: right windows match exactly, wrong
+    ones (the clock is off by more than that) find nothing."""
+    truth = 321.0
+    tgt = capture(mixed_scene, start_s=REF_START + truth, duration_s=9.0, snr_db=3, gimbal_db=12,
+                  highpass_hz=150, reverb_rt60_s=0.6, direct_to_reverb_db=-6, seed=5)  # fmt: skip
+    right = estimate_offset(mixed_ref, tgt, search=(truth - 1.5, truth + 1.5))
+    assert right.offset_s == pytest.approx(truth, abs=HARD_TOL)
+    for shift in (-20.0, -7.0, 4.0, 13.0):
+        wrong = estimate_offset(mixed_ref, tgt, search=(truth + shift - 1.5, truth + shift + 1.5))
+        assert wrong.status != MatchStatus.CONFIDENT

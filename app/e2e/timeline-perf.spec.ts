@@ -96,6 +96,10 @@ test("pans and zooms a 300-clip timeline smoothly", async () => {
   await expect(page.getByTestId("media-summary")).toContainText("301 clips");
   await page.getByTestId("stage-timeline").click();
   await expect(page.getByTestId("clip-ZOOM0001.WAV")).toBeAttached();
+  // The timeline alone (the cameras hidden), as the timeline was measured before the viewer existed.
+  await page.getByTestId("toggle-viewer").click();
+  await expect(page.getByTestId("multicam-viewer")).toHaveCount(0);
+  await page.getByRole("button", { name: "Fit" }).click(); // the narrower timeline: the whole day again
   const drawn = () => page.evaluate(() => window.mcsyncTimeline?.stats() ?? { clips: 0, waveforms: 0 });
   await expect.poll(async () => (await drawn()).waveforms).toBe(301); // every waveform file has loaded
   await page.screenshot({ path: path.join(screens, "perf-300-clips.png") });

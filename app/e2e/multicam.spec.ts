@@ -358,7 +358,8 @@ test("9-10 · a manual offset moves the picture and the timeline, and undoes", a
   await expect.poll(async () => frameOf(await sceneFrames(), "FX3"), { timeout: 10_000 }).toBe(before - 1);
   await expect(page.getByTestId("inspector-status")).toHaveText("CONFIRMED"); // placed by hand
   await shot("mc-05-nudged");
-  await page.keyboard.press(process.platform === "darwin" ? "Meta+z" : "Control+z");
+  // ⌘Z / Ctrl+Z is a menu accelerator (synthetic key presses do not reach the native menu): the Undo button.
+  await page.getByRole("button", { name: "Undo" }).click();
   await expect(page.getByTestId("inspector-offset")).toHaveText(offset0!, { timeout: 10_000 });
   await expect.poll(async () => frameOf(await sceneFrames(), "FX3"), { timeout: 10_000 }).toBe(before);
 
@@ -397,10 +398,22 @@ test("11-12 · reviews the clips that need it, beside the reference", async () =
     return;
   }
   await start.click();
-  await expect(page.getByTestId("review-bar")).toBeVisible();
-  await expect(page.getByTestId("viewer-compare")).toBeVisible();
+  const bar = page.getByTestId("review-bar");
+  await expect(bar).toBeVisible();
+  // The clip under review on the right, a synchronised camera overlapping it on the left.
+  await expect(page.getByTestId("viewer-compare").locator("[data-testid^=angle-]")).toHaveCount(2);
   await shot("mc-07-review");
-  await page.getByTestId("review-next").click();
-  await page.getByRole("button", { name: "Close the review" }).click();
-  await expect(page.getByTestId("review-bar")).toHaveCount(0);
+  const total = Number(/REVIEW \d+ \/ (\d+)/.exec((await bar.textContent()) ?? "")![1]);
+  const reviewed = await page.getByTestId("inspector").locator(".sy-si__facts span").nth(1).textContent();
+  // Accept: the clip is locked where it is (confirmed) and the next one comes up; the last one ends the review.
+  await page.getByTestId("review-accept").click();
+  if (total === 1) {
+    await expect(bar).toHaveCount(0);
+    await expect(page.getByTestId("inspector-status")).toHaveText("CONFIRMED"); // accepted: locked by the user
+  } else {
+    await expect(bar).toContainText(`REVIEW 2 / ${total}`);
+    await page.getByRole("button", { name: "Close the review" }).click();
+    await expect(bar).toHaveCount(0);
+  }
+  expect(reviewed).toBeTruthy();
 });

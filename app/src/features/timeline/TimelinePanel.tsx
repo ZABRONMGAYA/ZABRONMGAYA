@@ -1,6 +1,6 @@
 // The timeline: group tabs, zoom, the synchronised tracks, and the clips that could not be placed. Before the
 // first synchronisation it says what is missing and offers the next step.
-import { Import, LoaderCircle, Redo2, Undo2, Waypoints } from "lucide-react";
+import { Import, LoaderCircle, PanelTopClose, PanelTopOpen, Redo2, Undo2, Waypoints } from "lucide-react";
 import { useEffect } from "react";
 
 import type { Session } from "../../api/contract";
@@ -8,6 +8,7 @@ import { Button, EmptyState, Select, SyncoraSymbol, shortcut } from "../../desig
 import { formatDuration, formatTime } from "../../lib/format";
 import { useProd } from "../../state/production";
 import { Transport } from "../multicam/Transport";
+import { usePlayback } from "../../state/playback";
 import { displayedGroup, refreshIfStale, useApp, usePick } from "../../state/store";
 import { Tracks } from "./Tracks";
 
@@ -174,6 +175,22 @@ function TimelineEmpty() {
   );
 }
 
+/** Show or hide the multicamera viewer above the timeline. */
+function ViewerToggle() {
+  const viewer = usePlayback((s) => s.viewer);
+  return (
+    <button
+      className="small"
+      onClick={() => usePlayback.getState().setViewer(!viewer)}
+      title={viewer ? "Hide the cameras: the timeline takes the whole height" : "Show the cameras above the timeline"}
+      aria-pressed={viewer}
+      data-testid="toggle-viewer"
+    >
+      {viewer ? <PanelTopClose size={14} aria-hidden /> : <PanelTopOpen size={14} aria-hidden />} Cameras
+    </button>
+  );
+}
+
 /** A sync group's name: its session's label when there is one. */
 function groupLabel(group: number, sessions: Session[]): string {
   const session = sessions.find((s) => s.group_no === group && s.source === "auto");
@@ -203,6 +220,7 @@ export function TimelinePanel() {
     <section className="timeline" data-testid="timeline">
       <div className="timeline-bar">
         {current && <Transport />}
+        {current && <ViewerToggle />}
         {(timeline?.groups.length ?? 0) <= 6 ? (
           <div className="tabs" role="tablist">
             {timeline?.groups.map((g) => (

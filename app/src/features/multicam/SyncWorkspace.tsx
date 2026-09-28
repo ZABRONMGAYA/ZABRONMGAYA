@@ -39,6 +39,13 @@ function useWorkspaceKeys(): void {
       const clip = findClip(app.timeline, app.selected);
       const frame = 1 / (parseRate(clip?.frame_rate ?? null) ?? 25);
       const key = e.key;
+      // Enter and Space activate a focused button (the timeline's clip list, the inspector's actions) as usual.
+      const focused = document.activeElement;
+      if (
+        (key === "Enter" || key === " ") &&
+        (focused instanceof HTMLButtonElement || focused instanceof HTMLAnchorElement)
+      )
+        return;
       if (key === " " && !mod) {
         e.preventDefault();
         audioMonitor(); // created from a user gesture, so its AudioContext may start
@@ -131,6 +138,18 @@ export function SyncWorkspace() {
     };
   }, []);
   const review = usePlayback((s) => s.review);
+  const viewer = usePlayback((s) => s.viewer);
+
+  if (!viewer)
+    // The timeline alone, the inspector beside it (more room for many tracks).
+    return (
+      <div className="workspace sy-ws" data-testid="workspace">
+        <div className="panes">
+          <TimelinePanel />
+          <SyncInspector />
+        </div>
+      </div>
+    );
 
   return (
     <div className="workspace sy-ws" data-testid="workspace">

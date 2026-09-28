@@ -16,6 +16,8 @@ interface Saved {
   quality: Quality;
   customHeight: number;
   layout: "grid" | "program";
+  /** The viewer above the timeline (off: the timeline takes the whole height, the inspector beside it). */
+  viewer: boolean;
 }
 
 function load(): Saved {
@@ -25,9 +27,10 @@ function load(): Saved {
       quality: v.quality ?? "auto",
       customHeight: v.customHeight ?? 540,
       layout: v.layout === "program" ? "program" : "grid",
+      viewer: v.viewer !== false,
     };
   } catch {
-    return { quality: "auto", customHeight: 540, layout: "grid" };
+    return { quality: "auto", customHeight: 540, layout: "grid", viewer: true };
   }
 }
 
@@ -66,6 +69,7 @@ export interface PlaybackState extends Omit<Saved, "layout"> {
   points: (SyncPoints & { clipId: number }) | null;
 
   setLayout(layout: Layout): void;
+  setViewer(viewer: boolean): void;
   setActive(key: string | null): void;
   setReview(review: PlaybackState["review"]): void;
   setPoints(points: PlaybackState["points"]): void;
@@ -97,7 +101,18 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
 
   setLayout(layout) {
     set({ layout });
-    if (layout !== "compare") save({ quality: get().quality, customHeight: get().customHeight, layout });
+    if (layout !== "compare")
+      save({ quality: get().quality, customHeight: get().customHeight, layout, viewer: get().viewer });
+  },
+  setViewer(viewer) {
+    set({ viewer });
+    const s = get();
+    save({
+      quality: s.quality,
+      customHeight: s.customHeight,
+      layout: s.layout === "program" ? "program" : "grid",
+      viewer,
+    });
   },
   setProgram(program) {
     set({ program });
@@ -117,7 +132,12 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
   setQuality(quality, customHeight) {
     set({ quality, ...(customHeight ? { customHeight } : {}) });
     const s = get();
-    save({ quality: s.quality, customHeight: s.customHeight, layout: s.layout === "program" ? "program" : "grid" });
+    save({
+      quality: s.quality,
+      customHeight: s.customHeight,
+      layout: s.layout === "program" ? "program" : "grid",
+      viewer: s.viewer,
+    });
   },
   toggleHidden(key) {
     set((s) => {
