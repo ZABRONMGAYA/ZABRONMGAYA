@@ -14,6 +14,10 @@ Version 2 (Syncora 1.1) is built for productions with thousands of files:
 * ``session`` groups clips by recording session;
 * ``transcript_segment``, ``marker`` and ``ai_analysis`` are reserved for analysis results (with the indexes their
   queries need), and ``meta`` holds pipeline state.
+
+Version 3 (Syncora 1.2) fills them: transcripts are written per transcription task (``chunk``), each utterance
+keeps its voice fingerprint, ``speaker`` holds the project's speakers (with the names the user gives them),
+``transcript_state`` which model and language a clip was transcribed with, and markers record where they come from.
 """
 
 from __future__ import annotations
@@ -218,7 +222,35 @@ def _migrate_v2(conn: sqlite3.Connection) -> None:
         )
 
 
-MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {2: _migrate_v2}
+V3_SQL = """
+ALTER TABLE transcript_segment ADD COLUMN chunk INTEGER NOT NULL DEFAULT 0;   -- the transcription task that wrote it
+ALTER TABLE transcript_segment ADD COLUMN fingerprint BLOB;                   -- voice fingerprint, float32
+CREATE INDEX transcript_clip_chunk ON transcript_segment (clip_id, chunk);
+CREATE TABLE speaker (
+    key        TEXT PRIMARY KEY,                  -- S01, S02 …
+    name       TEXT,                              -- given by the user
+    centroid   BLOB NOT NULL,                     -- mean voice fingerprint, float32
+    utterances INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE transcript_state (
+    clip_id    INTEGER PRIMARY KEY REFERENCES clip (id) ON DELETE CASCADE,
+    model      TEXT NOT NULL,
+    language   TEXT NOT NULL,                     -- requested: 'auto' or a language code
+    chunks     INTEGER NOT NULL,
+    updated_at TEXT NOT NULL
+);
+ALTER TABLE marker ADD COLUMN source TEXT NOT NULL DEFAULT 'user';            -- user | speech | search | ai
+ALTER TABLE marker ADD COLUMN created_at TEXT
+"""
+
+
+def _migrate_v3(conn: sqlite3.Connection) -> None:
+    for statement in V3_SQL.split(";"):
+        if statement.strip():
+            conn.execute(statement)
+
+
+MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {2: _migrate_v2, 3: _migrate_v3}
 LATEST = max(MIGRATIONS)
 
 

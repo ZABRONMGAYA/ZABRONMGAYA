@@ -11,6 +11,9 @@ requires-python = ">=3.11"
 dependencies = [
     "numpy>=1.26",
     "scipy>=1.11",
+    # Speech and voice models on ONNX Runtime (transcription, speakers, speech-based sync): mcsync.ai
+    "sherpa-onnx>=1.13.8",
+    "certifi>=2024.2",  # model downloads from the frozen app
 ]
 
 [project.optional-dependencies]
@@ -37,6 +40,7 @@ testpaths = ["tests"]
 addopts = "-ra --strict-markers"
 markers = [
     "slow: multi-minute synthetic recordings (deselect with -m 'not slow')",
+    "models: needs the bundled AI models (scripts/fetch_models.py); skipped when they are not there",
 ]
 
 [tool.ruff]

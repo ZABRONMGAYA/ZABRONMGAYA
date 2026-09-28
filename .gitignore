@@ -29,3 +29,6 @@ app/playwright-report/
 Thumbs.db
 .idea/
 .vscode/
+
+# AI models (engine/scripts/fetch_models.py), downloaded, never committed
+engine/models/

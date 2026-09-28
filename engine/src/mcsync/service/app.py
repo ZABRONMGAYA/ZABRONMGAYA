@@ -33,6 +33,8 @@ from pathlib import Path
 from typing import Any
 
 from mcsync import __version__
+from mcsync.ai.models import DEFAULT_SPEECH_MODEL, SPEECH_MODELS
+from mcsync.ai.speech import LANGUAGES
 from mcsync.export import ExportOptions, export_timeline
 from mcsync.media.cache import AnalysisCache, params_key
 from mcsync.media.extract import extract_to_cache
@@ -53,6 +55,7 @@ from mcsync.resources import (
     recommend_workers,
 )
 from mcsync.serialize import to_jsonable
+from mcsync.service.ai_methods import AiMethods
 from mcsync.sync.candidates import PlannedPair
 from mcsync.sync.engine import SyncEngine, SyncOptions, create_match_pool
 from mcsync.sync.params import DEFAULT_PARAMS, SyncParams
@@ -75,11 +78,16 @@ SETTINGS_DEFAULTS: dict[str, Any] = {
     "timecode_jam_synced": False,
     "use_creation_time": True,
     "review_threshold": 0.85,
+    # AI features (mcsync.ai)
+    "transcription_model": DEFAULT_SPEECH_MODEL,
+    "transcription_language": "auto",
+    "ai_fallback": False,  # place clips audio could not place by speech and visual evidence, as REVIEW
 }
 HIGH_CONFIDENCE = 0.95
+SPEECH_MODEL_IDS = {m.id for m in SPEECH_MODELS}
 
 
-class EngineService:
+class EngineService(AiMethods):
     """All engine methods. Attached to a :class:`JsonRpcServer` for the desktop app,
     or used directly (``server=None``) by the command line."""
 
@@ -114,6 +122,7 @@ class EngineService:
         # Held while preparing solver inputs, so a correction waits for the background warm-up instead of doing
         # the same work at the same time.
         self._prep = threading.RLock()
+        self._ai_init()
         raise_open_file_limit()
         if server is None:
             return
@@ -134,6 +143,11 @@ class EngineService:
             "timeline.get", "waveform.info", "export.xml",
             "cache.info", "cache.clear_unused",
             "job.cancel", "job.list",
+            "ai.status", "ai.download_model", "ai.remove_model",
+            "transcripts.start", "transcripts.cancel", "transcripts.overview", "transcript.get",
+            "speakers.list", "speakers.rename", "speakers.merge",
+            "markers.list", "markers.add", "markers.update", "markers.delete",
+            "search.query",
         ):  # fmt: skip
             server.register(name, getattr(self, name.replace(".", "_")))
 
@@ -336,6 +350,10 @@ class EngineService:
             SyncMode(settings["mode"])
         if "review_threshold" in settings and not 0.0 < float(settings["review_threshold"]) <= 1.0:
             raise RpcError(APP_ERROR, "review_threshold must be within (0, 1]")
+        if "transcription_model" in settings and settings["transcription_model"] not in SPEECH_MODEL_IDS:
+            raise RpcError(APP_ERROR, f"unknown speech model {settings['transcription_model']}")
+        if "transcription_language" in settings and settings["transcription_language"] not in ("auto", *LANGUAGES):
+            raise RpcError(APP_ERROR, f"unknown language {settings['transcription_language']}")
         project = self._require_project()
         project.update_settings(**settings)
         return {**SETTINGS_DEFAULTS, **project.settings()}

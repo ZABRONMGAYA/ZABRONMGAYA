@@ -35,6 +35,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
+
+from mcsync.ai import speakers as voices
+from mcsync.ai.speech import TranscriptionCancelled, chunks
 from mcsync.media.devices import find_chapters, identify_device
 from mcsync.media.extract import ExtractionCancelled, extract_to_cache
 from mcsync.media.fingerprint import fingerprint
@@ -118,7 +122,10 @@ class Pipeline:
         self._walk_pool = ThreadPoolExecutor(1, thread_name_prefix="pipeline-walk")
         self._probe_pool = ThreadPoolExecutor(max(1, plan.probe), thread_name_prefix="probe")
         self._analyze_pool = ThreadPoolExecutor(max(1, plan.analyze), thread_name_prefix="analyze")
-        self._maybe_pending = {"probe": True, "analyze": True, "match": True}
+        # Transcription: one task at a time; the speech models use several threads themselves.
+        self._speech_pool = ThreadPoolExecutor(1, thread_name_prefix="speech")
+        self._speakers: list[voices.Speaker] | None = None
+        self._maybe_pending = {"probe": True, "analyze": True, "match": True, "transcribe": True}
         self._activity: deque[dict] = deque(maxlen=300)
         self._done_times: dict[str, deque[float]] = defaultdict(lambda: deque(maxlen=5000))
         self._last_progress = 0.0
@@ -177,7 +184,7 @@ class Pipeline:
             self._cond.notify_all()
         if self._thread is not None:
             self._thread.join(timeout)
-        for pool in (self._probe_pool, self._analyze_pool, self._aux_pool, self._walk_pool):
+        for pool in (self._probe_pool, self._analyze_pool, self._speech_pool, self._aux_pool, self._walk_pool):
             pool.shutdown(wait=False, cancel_futures=True)
         # Anything still marked running goes back to the queue on the next open (Project.open resets it).
 
@@ -428,6 +435,7 @@ class Pipeline:
             ("probe", "probe", self.plan.probe),
             ("analyze", "analyze", self.plan.analyze),
             ("match", "match", self.service.match_workers),
+            ("transcribe", "speech", 1),
         ):
             if not self._maybe_pending.get(kind):
                 continue
@@ -458,6 +466,9 @@ class Pipeline:
         elif t.kind == "analyze":
             run = _Running(t, "analyze", "", time.monotonic(), threading.Event())
             fut = self._analyze_pool.submit(self._do_analyze, t.clip_id, run.cancel)
+        elif t.kind == "transcribe":
+            run = _Running(t, "speech", "", time.monotonic(), threading.Event())
+            fut = self._speech_pool.submit(self._do_transcribe, t, run.cancel)
         else:
             inputs = self._clip_inputs()
             ref, tgt = inputs.get(str(t.clip_id)), inputs.get(str(t.other_clip_id))
@@ -538,6 +549,62 @@ class Pipeline:
             "name": row.name,
         }
 
+    def _do_transcribe(self, t: Task, cancel: threading.Event) -> dict:
+        row = self.project.clip(t.clip_id)  # type: ignore[arg-type]
+        stream = row.audio_stream_info
+        if stream is None:
+            raise _Skip("no audio stream")
+        if row.status == "offline":
+            raise _Skip("media offline")
+        d = t.detail
+        transcriber = self.service.transcriber(d["model"], d["language"])
+        utterances, events = transcriber.transcribe_range(
+            self.service.tools(), row.path, stream.index, row.audio_channel, stream.channels,
+            float(d["start_s"]), float(d["end_s"]), cancel,
+        )  # fmt: skip
+        return {"clip_id": row.id, "chunk": int(d["chunk"]), "span": (float(d["start_s"]), float(d["end_s"])),
+                "utterances": utterances, "events": events, "name": row.name}  # fmt: skip
+
+    # ------------------------------------------------------------- transcription
+
+    def transcribe(self, clip_ids: list[int], model: str, language: str, *, priority: int = PRIORITY["normal"],
+                   redo: bool = False) -> int:  # fmt: skip
+        """Queue transcription of these clips, one task per chunk. Returns how many tasks became pending."""
+        rows = {r.id: r for r in self.project.clips()}
+        items = []
+        for clip_id in clip_ids:
+            row = rows.get(clip_id)
+            if row is None or row.audio_stream is None:
+                continue
+            spans = chunks(row.info.duration_s)
+            self.project.set_transcript_state(clip_id, model, language, len(spans))
+            items += [
+                {"target": f"{clip_id}:{k}", "clip_id": clip_id, "priority": priority,
+                 "detail": {"chunk": k, "start_s": a, "end_s": b, "model": model, "language": language}}
+                for k, (a, b) in enumerate(spans)
+            ]  # fmt: skip
+        if redo:
+            self.project.clear_transcripts(clip_ids)
+        n = self.project.enqueue("transcribe", items, requeue=True)
+        with self._cond:
+            self._maybe_pending["transcribe"] = True
+            self._cond.notify_all()
+        self._log("Transcription", f"{len({i['clip_id'] for i in items})} clip(s) queued")
+        return n
+
+    def forget_speakers(self) -> None:
+        """The user renamed or merged speakers: reload them before assigning new utterances."""
+        with self._cond:
+            self._speakers = None
+
+    def _speaker_list(self) -> list[voices.Speaker]:
+        if self._speakers is None:
+            self._speakers = [
+                voices.Speaker(r["key"], np.frombuffer(r["centroid"], dtype=np.float32).copy(), int(r["utterances"]))
+                for r in self.project.speakers()
+            ]
+        return self._speakers
+
     # ------------------------------------------------------------- results (controller thread)
 
     def _apply(self, force: bool = False) -> None:
@@ -556,6 +623,8 @@ class Pipeline:
             self._apply_analyses(by_pool["analyze"])
         if by_pool["match"]:
             self._apply_matches(by_pool["match"])
+        if by_pool["speech"]:
+            self._apply_transcripts(by_pool["speech"])
 
     def _finish(self, results: list[tuple[int, str, str | None]], release: list[int]) -> None:
         if release:
@@ -633,6 +702,43 @@ class Pipeline:
         if rows:
             self.project.set_audio_analysis(rows)
             self.service.notify("media.analyzed", {"clip_ids": [r["clip_id"] for r in rows]})
+        self._finish(results, release)
+
+    def _apply_transcripts(self, items: list) -> None:
+        results: list[tuple[int, str, str | None]] = []
+        release: list[int] = []
+        touched: set[int] = set()
+        known = self._speaker_list()
+        for run, value, exc in items:
+            t = run.task
+            if exc is None:
+                keys = voices.assign([u.fingerprint for u in value["utterances"]], known)
+                rows = [
+                    (u.start_s, u.end_s, key, u.language, u.text,
+                     u.fingerprint.astype(np.float32).tobytes() if u.fingerprint is not None else None)
+                    for u, key in zip(value["utterances"], keys, strict=True)
+                ]  # fmt: skip
+                events = [(e.t_s, e.label) for e in value["events"]]
+                self.project.replace_transcript_chunk(value["clip_id"], value["chunk"], value["span"], rows, events)
+                results.append((t.id, "done", None))
+                touched.add(value["clip_id"])
+                self._done_times["transcribe"].append(time.monotonic())
+                self._log("Speech", f"{value['name']} · {len(rows)} utterance(s)")
+            elif isinstance(exc, TranscriptionCancelled) and not run.discard:
+                release.append(t.id)  # paused: back to the queue
+            elif run.discard:
+                continue
+            elif isinstance(exc, _Skip):
+                results.append((t.id, "skipped", str(exc)))
+            else:
+                results.append((t.id, "failed", _message(exc)))
+                self._log("Speech", f"{self._name(t.clip_id)} · {_message(exc)}", "error")
+        if touched:
+            for absorbed, into in voices.merges(known):
+                keep = next(s for s in known if s.key == into)
+                self.project.merge_speakers(absorbed, into, keep.centroid.astype(np.float32).tobytes(), keep.count)
+            self.project.save_speakers([(s.key, s.centroid.astype(np.float32).tobytes(), s.count) for s in known])
+            self.service.notify("transcript.updated", {"clip_ids": sorted(touched)})
         self._finish(results, release)
 
     def _apply_matches(self, items: list) -> None:
@@ -944,7 +1050,7 @@ class Pipeline:
             ]  # fmt: skip
         empty = dict.fromkeys(("pending", "running", "done", "failed", "skipped", "cancelled"), 0)
         stages = {}
-        for kind in ("probe", "analyze", "match", "extend"):
+        for kind in ("probe", "analyze", "match", "extend", "transcribe"):
             c = {**empty, **counts.get(kind, {})}
             c["rate_per_min"] = self._rate(kind)
             stages[kind] = c

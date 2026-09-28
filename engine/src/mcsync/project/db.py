@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 import threading
 import uuid
@@ -863,6 +864,13 @@ class Project:
                   r.get("n_hashes"), r["status"], now) for r in rows],
             )  # fmt: skip
 
+    def task_counts_by_clip(self, kind: str) -> list[dict]:
+        """``{clip_id, status, n}`` for one kind of task."""
+        rows = self._query(
+            "SELECT clip_id, status, COUNT(*) AS n FROM task WHERE kind = ? GROUP BY clip_id, status", (kind,)
+        )
+        return [dict(r) for r in rows]
+
     def audio_analysis(self) -> dict[int, dict]:
         return {r["clip_id"]: dict(r) for r in self._query("SELECT * FROM audio_analysis")}
 
@@ -1150,28 +1158,150 @@ class Project:
                 rows,
             )
 
+    def set_transcript_state(self, clip_id: int, model: str, language: str, chunks: int) -> None:
+        with self._tx() as c:
+            c.execute(
+                "INSERT INTO transcript_state (clip_id, model, language, chunks, updated_at) VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT (clip_id) DO UPDATE SET model = excluded.model, language = excluded.language, "
+                "chunks = excluded.chunks, updated_at = excluded.updated_at",
+                (clip_id, model, language, chunks, _now()),
+            )
+
+    def transcript_states(self) -> dict[int, dict]:
+        return {int(r["clip_id"]): dict(r) for r in self._query("SELECT * FROM transcript_state")}
+
+    def replace_transcript_chunk(
+        self,
+        clip_id: int,
+        chunk: int,
+        span: tuple[float, float],
+        utterances: Sequence[tuple[float, float, str | None, str | None, str, bytes | None]],
+        events: Sequence[tuple[float, str]],
+    ) -> None:
+        """What one transcription task found in ``span`` of a clip: ``(start_s, end_s, speaker, language, text,
+        fingerprint)`` utterances and ``(t_s, label)`` sound events. Replaces an earlier run of the same task."""
+        with self._tx() as c:
+            c.execute("DELETE FROM transcript_segment WHERE clip_id = ? AND chunk = ?", (clip_id, chunk))
+            c.execute("DELETE FROM marker WHERE clip_id = ? AND source = 'speech' AND t_s >= ? AND t_s < ?",
+                      (clip_id, *span))  # fmt: skip
+            c.executemany(
+                "INSERT INTO transcript_segment (clip_id, chunk, start_s, end_s, speaker, language, text, "
+                "fingerprint) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                [(clip_id, chunk, *u) for u in utterances],
+            )
+            c.executemany(
+                "INSERT INTO marker (clip_id, t_s, type, label, source, created_at) VALUES (?, ?, ?, ?, 'speech', ?)",
+                [(clip_id, t, label.lower(), label, _now()) for t, label in events],
+            )
+
+    def clear_transcripts(self, clip_ids: Sequence[int]) -> None:
+        with self._tx() as c:
+            for chunk in _chunks(list(clip_ids)):
+                marks = ",".join("?" * len(chunk))
+                c.execute(f"DELETE FROM transcript_segment WHERE clip_id IN ({marks})", chunk)
+                c.execute(f"DELETE FROM transcript_state WHERE clip_id IN ({marks})", chunk)
+                c.execute(f"DELETE FROM marker WHERE source = 'speech' AND clip_id IN ({marks})", chunk)
+
     def transcript(self, clip_id: int) -> list[dict]:
-        rows = self._query("SELECT * FROM transcript_segment WHERE clip_id = ? ORDER BY start_s", (clip_id,))
+        rows = self._query(
+            "SELECT id, clip_id, chunk, start_s, end_s, speaker, language, text, confidence "
+            "FROM transcript_segment WHERE clip_id = ? ORDER BY start_s",
+            (clip_id,),
+        )
         return [dict(r) for r in rows]
 
-    def search_transcripts(self, text: str, limit: int = 100) -> list[dict]:
-        if has_fts(self._conn):
-            rows = self._query(
-                "SELECT transcript_segment.* FROM transcript_fts JOIN transcript_segment "
-                "ON transcript_segment.id = transcript_fts.rowid WHERE transcript_fts MATCH ? ORDER BY rank LIMIT ?",
-                ('"' + text.replace('"', '""') + '"', limit),
+    def transcript_totals(self) -> dict:
+        row = self._query(
+            "SELECT COUNT(*) AS segments, COUNT(DISTINCT clip_id) AS clips, COALESCE(SUM(end_s - start_s), 0) AS "
+            "speech_s, COUNT(DISTINCT speaker) AS speakers FROM transcript_segment"
+        )[0]
+        languages = {
+            r["language"]: int(r["n"])
+            for r in self._query(
+                "SELECT language, COUNT(*) AS n FROM transcript_segment WHERE language IS NOT NULL "
+                "GROUP BY language ORDER BY n DESC"
             )
-        else:
-            rows = self._query(
-                "SELECT * FROM transcript_segment WHERE text LIKE ? ORDER BY clip_id, start_s LIMIT ?",
-                (f"%{text}%", limit),
+        }
+        return {**dict(row), "languages": languages}
+
+    def segments_without_speaker(self) -> list[tuple[int, bytes]]:
+        return [
+            (int(r["id"]), r["fingerprint"])
+            for r in self._query(
+                "SELECT id, fingerprint FROM transcript_segment WHERE speaker IS NULL AND fingerprint IS NOT NULL "
+                "ORDER BY clip_id, start_s"
             )
+        ]
+
+    def set_segment_speakers(self, rows: Sequence[tuple[str, int]]) -> None:
+        """``(speaker_key, segment_id)``."""
+        with self._tx() as c:
+            c.executemany("UPDATE transcript_segment SET speaker = ? WHERE id = ?", rows)
+
+    def speakers(self) -> list[dict]:
+        rows = self._query(
+            "SELECT speaker.key, speaker.name, speaker.centroid, speaker.utterances, "
+            "(SELECT COUNT(*) FROM transcript_segment s WHERE s.speaker = speaker.key) AS segments, "
+            "(SELECT COALESCE(SUM(end_s - start_s), 0) FROM transcript_segment s WHERE s.speaker = speaker.key) "
+            "AS speech_s FROM speaker ORDER BY speaker.key"
+        )
         return [dict(r) for r in rows]
+
+    def speaker_segments(self, key: str, limit: int = 50) -> list[dict]:
+        rows = self._query(
+            "SELECT id, clip_id, start_s, end_s, speaker, language, text FROM transcript_segment WHERE speaker = ? "
+            "ORDER BY end_s - start_s DESC LIMIT ?",
+            (key, limit),
+        )
+        return [dict(r) for r in rows]
+
+    def save_speakers(self, rows: Sequence[tuple[str, bytes, int]]) -> None:
+        """``(key, centroid, utterances)``: voices learned so far (names are kept)."""
+        with self._tx() as c:
+            c.executemany(
+                "INSERT INTO speaker (key, centroid, utterances) VALUES (?, ?, ?) ON CONFLICT (key) DO UPDATE SET "
+                "centroid = excluded.centroid, utterances = excluded.utterances",
+                rows,
+            )
+
+    def rename_speaker(self, key: str, name: str | None) -> None:
+        with self._tx() as c:
+            if c.execute("UPDATE speaker SET name = ? WHERE key = ?", (name or None, key)).rowcount == 0:
+                raise ProjectError(f"no speaker {key}")
+
+    def merge_speakers(self, absorbed: str, into: str, centroid: bytes | None = None, utterances: int | None = None):
+        """Every utterance of ``absorbed`` becomes ``into``'s; ``absorbed`` keeps no name or segments."""
+        with self._tx() as c:
+            c.execute("UPDATE transcript_segment SET speaker = ? WHERE speaker = ?", (into, absorbed))
+            name = c.execute("SELECT name FROM speaker WHERE key = ?", (absorbed,)).fetchone()
+            c.execute("DELETE FROM speaker WHERE key = ?", (absorbed,))
+            if name and name[0]:
+                c.execute("UPDATE speaker SET name = COALESCE(name, ?) WHERE key = ?", (name[0], into))
+            if centroid is not None:
+                c.execute("UPDATE speaker SET centroid = ?, utterances = ? WHERE key = ?", (centroid, utterances, into))
 
     def add_markers(self, rows: Sequence[tuple[int, float, str, str | None, float | None]]) -> None:
         """``(clip_id, t_s, type, label, confidence)``."""
         with self._tx() as c:
             c.executemany("INSERT INTO marker (clip_id, t_s, type, label, confidence) VALUES (?, ?, ?, ?, ?)", rows)
+
+    def add_marker(self, clip_id: int, t_s: float, label: str | None, *, marker_type: str = "user",
+                   source: str = "user") -> int:  # fmt: skip
+        with self._tx() as c:
+            cur = c.execute(
+                "INSERT INTO marker (clip_id, t_s, type, label, source, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (clip_id, t_s, marker_type, label, source, _now()),
+            )
+            return int(cur.lastrowid)  # type: ignore[arg-type]
+
+    def update_marker(self, marker_id: int, label: str | None) -> None:
+        with self._tx() as c:
+            if c.execute("UPDATE marker SET label = ? WHERE id = ?", (label, marker_id)).rowcount == 0:
+                raise ProjectError(f"no marker {marker_id}")
+
+    def delete_marker(self, marker_id: int) -> None:
+        with self._tx() as c:
+            c.execute("DELETE FROM marker WHERE id = ?", (marker_id,))
 
     def markers(self, clip_id: int | None = None, marker_type: str | None = None) -> list[dict]:
         where, args = [], []
@@ -1183,6 +1313,36 @@ class Project:
             args.append(marker_type)
         sql = "SELECT * FROM marker" + (" WHERE " + " AND ".join(where) if where else "") + " ORDER BY clip_id, t_s"
         return [dict(r) for r in self._query(sql, args)]
+
+    def search_transcripts(self, text: str, limit: int = 100) -> list[dict]:
+        """Utterances matching ``text``: the phrase first, then all its words, then any of them (FTS5 when this
+        SQLite has it, else LIKE)."""
+        cols = "s.id, s.clip_id, s.start_s, s.end_s, s.speaker, s.language, s.text, s.confidence"
+        words = [w for w in re.findall(r"\w+", text.lower()) if w]
+        if not words:
+            return []
+        if has_fts(self._conn):
+            found: dict[int, dict] = {}
+            quoted = ['"' + w.replace('"', '""') + '"' for w in words]
+            queries = [('"' + " ".join(words) + '"', "phrase"), (" AND ".join(quoted), "all words")]
+            if len(words) > 1:
+                queries.append((" OR ".join(quoted), "some words"))
+            for query, how in queries:
+                rows = self._query(
+                    f"SELECT {cols}, bm25(transcript_fts) AS rank FROM transcript_fts JOIN transcript_segment s "
+                    "ON s.id = transcript_fts.rowid WHERE transcript_fts MATCH ? ORDER BY rank LIMIT ?",
+                    (query, limit),
+                )
+                for r in rows:
+                    found.setdefault(int(r["id"]), {**dict(r), "match": how})
+                if len(found) >= limit:
+                    break
+            return list(found.values())[:limit]
+        rows = self._query(
+            f"SELECT {cols} FROM transcript_segment s WHERE lower(s.text) LIKE ? ORDER BY s.clip_id, s.start_s LIMIT ?",
+            (f"%{' '.join(words)}%", limit),
+        )
+        return [{**dict(r), "match": "phrase"} for r in rows]
 
     # ------------------------------------------------------------------ search
 
