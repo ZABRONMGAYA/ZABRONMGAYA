@@ -219,7 +219,8 @@ and this centres the residual drift error (±r·D/2) on the clip. `drift_ppm` al
 A clip is `needs_review` when any of these holds:
 
 * its confidence is < 0.7;
-* it is in a detached group;
+* it is in a detached group and `detached_groups_need_review` is set (off by default: a separate session is placed
+  on its own timeline);
 * its timecode disagrees with the audio consensus;
 * a confident audio match involving it had to be rejected.
 

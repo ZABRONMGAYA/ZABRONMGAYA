@@ -66,6 +66,18 @@ function createWindow(): BrowserWindow {
   win.once("ready-to-show", () => win.show());
   // The renderer is a local app: no navigation away from it, links open in the browser.
   win.webContents.on("will-navigate", (e) => e.preventDefault());
+  // A renderer that crashed or was killed (for example out of memory) is reloaded instead of leaving an empty
+  // window; the engine keeps the project open and the page picks it up again.
+  let reloads: number[] = [];
+  win.webContents.on("render-process-gone", (_event, details) => {
+    engine.note(`window renderer gone: ${details.reason} (exit code ${details.exitCode})`);
+    if (details.reason === "clean-exit" || win.isDestroyed()) return;
+    // A page that keeps crashing is left alone after three tries a minute.
+    reloads = [...reloads.filter((t) => Date.now() - t < 60_000), Date.now()];
+    if (reloads.length <= 3) setTimeout(() => !win.isDestroyed() && win.webContents.reload(), 500);
+  });
+  win.on("unresponsive", () => engine.note("window not responding"));
+  win.on("responsive", () => engine.note("window responding again"));
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith("https://")) void shell.openExternal(url);
     return { action: "deny" };

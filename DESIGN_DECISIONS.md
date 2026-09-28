@@ -45,7 +45,7 @@ Screenshots come from the end-to-end suites (`app/e2e`), taken at 1440 × 900 in
 | S12 Export | partial | Export is a dialog (format, frame rate, start timecode, handling of uncertain clips) plus a report of what was written. There is no full S12 screen and no export history. |
 | S13 Settings | implemented | General, Performance, Synchronization, Storage, About. See D-10. |
 | S14 Onboarding | not implemented | |
-| S15 Empty states | partial | No projects yet, No media, and *n* clips offline (as a banner). A search with no results shows an empty browser with "0 clips" instead of the S15 card. Transcript, markers and AI empty states need features not in this version. |
+| S15 Empty states | partial | No projects yet, No media, and *n* clips offline (as a banner). The Timeline before the first sync: no media yet, not synchronised yet (with analysis progress and Sync all), or synchronising (with Show progress). A view that fails to render shows an error card with Try again instead of a blank window. A search with no results shows an empty browser with "0 clips" instead of the S15 card. Transcript, markers and AI empty states need features not in this version. |
 | S16 Error states | partial | View errors dialog (per-file reason, Retry failed), offline banner with Relink (Find folder…), error toasts. |
 
 ## Decisions

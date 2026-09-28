@@ -2,6 +2,7 @@
 
 **Date:** 27 September 2026
 **Engine:** Syncora 1.1.0, commit `dd92d71`. Later commits change only the pipeline's pause guard, the interface and tests.
+The editing timings in §8 are from Syncora 1.1.1, which made corrections faster ([CHANGELOG.md](CHANGELOG.md)).
 **Hardware:** one 4-core Linux machine, described in §2.
 
 Everything below was measured, with three exceptions. Where a number is an estimate, it says so. Section 13 lists
@@ -181,6 +182,28 @@ In the app, the media browser renders only the rows and cards on screen: the pro
 p95 16.7 ms, software rendering on a CI Linux runner, `app/e2e/timeline-perf.spec.ts`). Progress shows counts and
 states only, never time estimates.
 
+### Editing in the app at 4,230 clips (1.1.1)
+
+The same production, opened in the app and edited on the Timeline. The times run from the action to the visible
+result, driven by Playwright on the test machine (§2). They come from one run after the project had been opened
+once; the first open of that session, with the project file not yet in the disk cache, took 13.4 s instead of
+1.9 s.
+
+| Action | 1.1.0 | 1.1.1 |
+|---|---|---|
+| Open the project, to the media browser with 4,230 clips | not measured | 1.9 s |
+| Switch to the Timeline | not measured | 0.2 s |
+| Drag a clip: new position shown | when the engine answered | at once (0.2 s including the drag) |
+| Drag a clip: engine confirms (first correction after opening) | up to 17.7 s | 1.3 s |
+| Later corrections and undo (engine time) | 3.5–4.6 s | 0.8–1.2 s |
+| Five quick nudges | five corrections, one after the other | shown at once; one correction, confirmed in 1.3 s |
+| Review list | 4,015 entries, all drawn | 57 entries, only the visible rows drawn |
+
+In 1.1.0, each correction re-read every clip's analysis and every match of the last run. It also saved every
+placement again. In 1.1.1 the engine keeps these between corrections, prepares them in the background when the
+Timeline opens, and saves only the placements that changed. The main thread of the window was blocked for at most
+0.3 s in any of these steps (typing a search at 4,230 clips).
+
 ## 9. Database benchmark
 
 `python -m mcsync.testing.dbbench` builds projects of 5,000 and 10,000 media files (5 % audio). Each also holds
@@ -246,7 +269,8 @@ figures (reverb, distance, drift over hours) are in [docs/SYNC_ENGINE.md](docs/S
    and above. On smaller machines, Settings → Performance can lower the matching workers.
 4. **Cache size.** 115 MB per hour of audio must fit on the cache drive: 7 GB for this production.
 
-The database, the solve and the interface were not bottlenecks at this size (§8, §9).
+The database and the solve were not bottlenecks at this size (§8, §9). Editing was, in 1.1.0: each correction took
+3.5–4.6 s. Version 1.1.1 brought that to about 1 s (§8).
 
 ## 12. Recommended hardware
 

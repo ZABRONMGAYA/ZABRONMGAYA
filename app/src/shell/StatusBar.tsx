@@ -9,6 +9,8 @@ export function StatusBar() {
   const pipeline = useProd((s) => s.pipeline);
   const review = useProd((s) => s.summary?.counts.review ?? 0);
   const selection = useProd((s) => s.selection.size);
+  // The live media index: it counts clips while an import is still running.
+  const clips = useProd((s) => (s.indexVersion >= 0 ? s.rows.length : null));
 
   const ok = engine.state === "ready";
   // The engine reports FFmpeg's banner ("ffmpeg version n8.1.3 Copyright …"); show the version only.
@@ -36,7 +38,11 @@ export function StatusBar() {
       {review > 0 && <span className="sy-statusbar__item sy-statusbar__item--warn">{review} need review</span>}
       {selection > 0 && <span className="sy-statusbar__item">{selection} selected</span>}
       <span className="sy-statusbar__right">
-        {project && <span className="sy-statusbar__item">{project.clips.toLocaleString()} clips</span>}
+        {project && (
+          <span className="sy-statusbar__item" data-testid="statusbar-clips">
+            {(clips ?? project.clips).toLocaleString()} clips
+          </span>
+        )}
         {ffmpeg && <span className="sy-statusbar__item">FFmpeg {ffmpeg}</span>}
         {engine.hello && <span className="sy-statusbar__item">Engine {engine.hello.version}</span>}
       </span>

@@ -41,9 +41,9 @@ cannot place go to an extended audio search, then to manual sync ([DESIGN_DECISI
 Installers for Windows 10/11 (64-bit) and macOS 12+ (Apple Silicon and Intel) are built and tested by the
 [release workflow](.github/workflows/release.yml):
 
-* `Syncora-Setup-1.1.0.exe`
-* `Syncora-1.1.0-macOS-arm64.dmg`
-* `Syncora-1.1.0-macOS-x64.dmg`
+* `Syncora-Setup-1.1.1.exe`
+* `Syncora-1.1.1-macOS-arm64.dmg`
+* `Syncora-1.1.1-macOS-x64.dmg`
 
 Download them from the repository's Releases page, or from the workflow run's artifacts.
 
@@ -63,6 +63,7 @@ Projects are `.syncora` files. Projects from Multicam Sync (`.mcsync`) open and 
 * [Synchronisation engine](docs/SYNC_ENGINE.md): the DSP and placement algorithms, candidate search, confidence
   model, measured accuracy and speed, limitations.
 * [Scalability test report](SCALABILITY_TEST_REPORT.md): stress, accuracy and database benchmarks.
+* [Changelog](CHANGELOG.md): what changed in each version.
 * [Design decisions](DESIGN_DECISIONS.md): how the interface follows the Syncora design handoff, and what is not
   implemented yet.
 * [Milestones](docs/MILESTONES.md): delivery plan with exit criteria.

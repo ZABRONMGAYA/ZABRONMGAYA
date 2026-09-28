@@ -111,6 +111,9 @@ class EngineService:
         self._matches_memo: tuple[tuple, list[PairwiseMatch]] | None = None
         self._inputs_memo: tuple[tuple, list[ClipInput]] | None = None
         self._warming = threading.Lock()
+        # Held while preparing solver inputs, so a correction waits for the background warm-up instead of doing
+        # the same work at the same time.
+        self._prep = threading.RLock()
         raise_open_file_limit()
         if server is None:
             return
@@ -691,9 +694,18 @@ class EngineService:
     def _settings(self) -> dict:
         return {**SETTINGS_DEFAULTS, **self._require_project().settings()}
 
-    def _clip_inputs(self, rows: list[ClipRow], job: Job | None = None, *, extract: bool = True) -> list[ClipInput]:
+    def _clip_inputs(
+        self, rows: list[ClipRow], job: Job | None = None, *, extract: bool = True, remember: bool = True
+    ) -> list[ClipInput]:
         """Engine inputs for the project's clips. Signals are mapped lazily; with ``extract``, audio not analysed
-        yet is extracted first (otherwise such clips count as having no audio)."""
+        yet is extracted first (otherwise such clips count as having no audio). With ``remember``, the inputs are
+        kept for the next call with the same clips (a solve); a call for a few clips passes False."""
+        with self._prep:
+            return self._prepare_inputs(rows, job, extract=extract, remember=remember)
+
+    def _prepare_inputs(
+        self, rows: list[ClipRow], job: Job | None, *, extract: bool, remember: bool
+    ) -> list[ClipInput]:
         settings = self._settings()
         pkey = params_key(self.params)
         # Everything the inputs depend on besides the files' content (which the fingerprint covers): when none of it
@@ -734,7 +746,7 @@ class EngineService:
             clip_ids=[r.engine_id for r in rows],
         )
         # Reused only when every clip has its analysis: a clip still waiting for it gets its signal on a later call.
-        if all(it.signal is not None or it.audio_stream is None for it in items):
+        if remember and all(it.signal is not None or it.audio_stream is None for it in items):
             self._inputs_memo = (key, inputs)
         return inputs
 
@@ -849,10 +861,11 @@ class EngineService:
     def _run_matches(self, run_id: int) -> list[PairwiseMatch]:
         """A finished run's matches, parsed once: 26,000 of them take over a second to load and decode."""
         project = self._require_project()
-        key = (str(project.path), run_id, *project.run_match_stamp(run_id))
-        if self._matches_memo is None or self._matches_memo[0] != key:
-            self._matches_memo = (key, project.run_matches(run_id))
-        return self._matches_memo[1]
+        with self._prep:
+            key = (str(project.path), run_id, *project.run_match_stamp(run_id))
+            if self._matches_memo is None or self._matches_memo[0] != key:
+                self._matches_memo = (key, project.run_matches(run_id))
+            return self._matches_memo[1]
 
     def sync_solve(self) -> dict:
         self._require_idle({"sync"})
@@ -908,7 +921,7 @@ class EngineService:
         """Refine a roughly dragged position by audio, within ±radius (not saved)."""
         project = self._require_project()
         rows = [project.clip(anchor_clip_id), project.clip(clip_id)]
-        anchor, clip = self._clip_inputs(rows)
+        anchor, clip = self._clip_inputs(rows, remember=False)
         if anchor.audio is None or clip.audio is None:
             raise RpcError(APP_ERROR, "both clips need audio to snap")
         match = self._engine().match_pair(anchor, clip, window=(approx_offset_s - radius_s, approx_offset_s + radius_s))
@@ -993,8 +1006,9 @@ class EngineService:
             try:
                 run_id = project.last_completed_run()
                 if run_id is not None and project is self.project:
-                    self._clip_inputs(project.clips(), extract=False)
-                    self._run_matches(run_id)
+                    with self._prep:
+                        self._clip_inputs(project.clips(), extract=False)
+                        self._run_matches(run_id)
             except Exception:  # noqa: BLE001 - the project closed meanwhile: nothing to prepare
                 pass
             finally:

@@ -18,7 +18,7 @@ formats, schemas and targets; [SYNC_ENGINE.md](SYNC_ENGINE.md) holds the synchro
 | Long projects (a wedding day: 10+ hours of media, 100–300 clips, 3 h continuous recorder tracks) | Analysis runs on a compact 8 kHz mono representation, streamed and memory-mapped; matching cost is dominated by a few FFTs per pair; results are persisted incrementally. |
 | Large productions (festivals, multi-day events: 4,000+ files, several TB, dozens of sessions) | Work is a persistent task queue in the project file, processed in the background by bounded worker pools; no stage holds more than one file's audio per worker; which clips to compare comes from an audio-fingerprint index instead of all pairs; placement is one sparse solve; the interface loads a compact index and renders only what is on screen (`media.index`, §6). |
 | Accuracy the editor can trust | Sub-millisecond audio alignment, explicit confidence per clip, a review queue for anything uncertain. Wrong-but-confident results are the worst failure and are designed against first. |
-| Interactive corrections | Expensive analysis and cheap placement are separate phases; manual edits only re-run the placement (milliseconds). |
+| Interactive corrections | Expensive analysis and cheap placement are separate phases; manual edits only re-run the placement (milliseconds for a wedding, about a second at 4,000 clips). |
 | Local-first, private | No network access required; no media leaves the machine. |
 | Cross-platform | macOS (arm64, x64) and Windows (x64) are release targets; Linux works for development and CI. |
 
@@ -240,7 +240,12 @@ engine methods (typed by `app/src/api/contract.ts`), engine events, native file 
   * Extraction runs ffmpeg subprocesses in parallel (default: half the cores).
   * Pairwise matching runs in a `ProcessPoolExecutor`. Pairs are independent, and each worker memory-maps the cached
     signals instead of receiving copies.
-  * `solve` runs inline because it takes milliseconds.
+  * `solve` runs inline: milliseconds for a wedding, about a second at 4,000 clips. What it needs (every clip's
+    analysis, the last run's matches) is kept between corrections and prepared in the background when the
+    timeline is opened.
+* **Renderer:** a drag or a nudge moves the clip on screen at once, before the engine answers. Rapid nudges are
+  sent as one correction when they stop. The engine's timeline then replaces the preview (or removes it if the
+  correction failed).
 * **Cancellation:** every job holds a token checked between pairs and between extraction chunks. Killing an ffmpeg
   child is always safe because nothing it writes is final until renamed.
 * **Incremental persistence:** each pair match is committed as it finishes. A crash or cancel loses at most the pairs

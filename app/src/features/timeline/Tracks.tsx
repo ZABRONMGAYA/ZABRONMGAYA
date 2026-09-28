@@ -1,6 +1,7 @@
 // The tracks of one timeline group: ruler, device tracks, and the clip canvas with its pointer gestures
 // (pan, zoom, select, drag a clip to a new position). Clips are also listed, visually hidden, as buttons,
 // so they can be reached with the keyboard and by screen readers.
+import { type LucideIcon, Mic, Plane, Smartphone, Square, Video } from "lucide-react";
 import { type PointerEvent, memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import type { TimelineClip, TimelineGroup } from "../../api/contract";
@@ -15,7 +16,7 @@ import "./probe";
 
 export const RULER_H = 26;
 const DRAG_THRESHOLD_PX = 3;
-const KIND_ICONS: Record<string, string> = { camera: "🎥", recorder: "🎙", phone: "📱", drone: "🛩", other: "◻︎" };
+const KIND_ICONS: Record<string, LucideIcon> = { camera: Video, recorder: Mic, phone: Smartphone, drone: Plane };
 
 type Gesture =
   | { kind: "pan"; x0: number; startS0: number; moved: boolean }
@@ -238,11 +239,10 @@ export function Tracks({ group }: { group: TimelineGroup }) {
       return;
     }
     const deltaS = (local(e).x - g.x0) / view.pxPerSec;
-    try {
-      await moveClip(g.clip.clip_id, (g.clip.start_s ?? 0) + deltaS);
-    } finally {
-      setDrag(null);
-    }
+    // The clip is drawn at its new place at once; the engine's timeline follows.
+    const moved = moveClip(g.clip.clip_id, (g.clip.start_s ?? 0) + deltaS);
+    setDrag(null);
+    await moved;
   }
 
   return (
@@ -257,26 +257,29 @@ export function Tracks({ group }: { group: TimelineGroup }) {
               +
             </button>
           </div>
-          {group.tracks.map((t) => (
-            <div
-              key={t.index}
-              className={`track-header ${t.kind} ${t.lane > 0 ? "overflow" : ""}`}
-              style={{ height: TRACK_H }}
-              data-testid={`track-${t.device_name}${t.lane > 0 ? `-${t.lane}` : ""}`}
-            >
-              <span className="kind-icon" aria-hidden="true">
-                {KIND_ICONS[t.kind] ?? KIND_ICONS.other}
-              </span>
-              <span className="track-name" title={t.device_name}>
-                {t.device_name}
-              </span>
-              {t.lane > 0 && (
-                <span className="badge warn" title="These clips overlap other clips of the same device">
-                  overlap
+          {group.tracks.map((t) => {
+            const Icon = KIND_ICONS[t.kind] ?? Square;
+            return (
+              <div
+                key={t.index}
+                className={`track-header ${t.kind} ${t.lane > 0 ? "overflow" : ""}`}
+                style={{ height: TRACK_H }}
+                data-testid={`track-${t.device_name}${t.lane > 0 ? `-${t.lane}` : ""}`}
+              >
+                <span className="kind-icon" aria-hidden="true">
+                  <Icon size={14} />
                 </span>
-              )}
-            </div>
-          ))}
+                <span className="track-name" title={t.device_name}>
+                  {t.device_name}
+                </span>
+                {t.lane > 0 && (
+                  <span className="badge warn" title="These clips overlap other clips of the same device">
+                    overlap
+                  </span>
+                )}
+              </div>
+            );
+          })}
         </div>
 
         <div

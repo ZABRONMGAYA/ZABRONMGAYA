@@ -104,6 +104,12 @@ test("imports hundreds of files in the background and can pause", async () => {
   await expect(page.getByTestId("import-progress")).toContainText(/Found \d+ files/);
   await expect.poll(shownClips, { timeout: 120_000 }).toBeGreaterThan(20);
 
+  // The timeline of a project still being imported says what is missing instead of opening blank.
+  await page.getByTestId("stage-timeline").click();
+  await expect(page.getByTestId("timeline-empty")).toContainText("Not synchronised yet");
+  const counted = async () => Number((await page.getByTestId("statusbar-clips").textContent())!.replace(/\D/g, ""));
+  await expect.poll(counted).toBeGreaterThan(20);
+
   await page.getByTestId("stage-sync").click();
   await page.getByTestId("pause").click();
   await expect(page.getByTestId("analysis-title")).toHaveText("Paused");
@@ -173,6 +179,13 @@ test("synchronises the production and sorts the results", async () => {
   );
   expect(synced).toBeGreaterThanOrEqual(truth.sync - truth.counts["duplicate"]!);
   await shot("results");
+  // The timeline draws the synchronised sessions; clips placed confidently in another session are not listed
+  // for review (they all used to be).
+  await page.getByTestId("stage-timeline").click();
+  await expect.poll(() => page.evaluate(() => window.mcsyncTimeline?.stats().clips ?? 0)).toBeGreaterThan(0);
+  const toReview = Number((await page.getByTestId("review-queue").locator(".count").textContent())!.replace(/\D/g, ""));
+  expect(toReview).toBeLessThan(synced / 2);
+  await page.getByTestId("stage-sync").click();
   // Unsynchronized and review clips open in the media browser, filtered.
   await page.getByTestId("category-review").click();
   await expect(page.getByTestId("media-search")).toHaveValue("review");

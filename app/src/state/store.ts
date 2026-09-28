@@ -81,6 +81,8 @@ export interface AppState {
   recent: string[];
   exportOpen: boolean;
   lastExport: ExportReport | null;
+  /** Corrections are on their way to the engine (the timeline shows them already). */
+  updating: boolean;
 
   init(): () => void;
   toast(kind: Toast["kind"], text: string): void;
@@ -103,7 +105,8 @@ export interface AppState {
   moveClip(clipId: number, startS: number): Promise<void>;
   confirm(clipId: number): Promise<void>;
   placeAtCursor(clipId: number): Promise<void>;
-  nudge(clipId: number, deltaS: number): Promise<void>;
+  /** Move a clip by `deltaS` at once; rapid nudges are sent to the engine as one correction when they stop. */
+  nudge(clipId: number, deltaS: number): void;
   snap(clipId: number): Promise<void>;
   loadMatches(clipId: number): Promise<void>;
   undo(): Promise<void>;
@@ -125,12 +128,195 @@ export interface AppState {
 }
 
 let toastId = 0;
-const nudgeTargets = new Map<number, number>();
+
+/** Clips by id, built once per timeline (lists of thousands of clips look clips up for every row). */
+const clipIndex = new WeakMap<Timeline, Map<number, TimelineClip>>();
 
 export function findClip(timeline: Timeline | null, clipId: number | null): TimelineClip | undefined {
   if (!timeline || clipId === null) return undefined;
-  for (const g of timeline.groups) for (const c of g.clips) if (c.clip_id === clipId) return c;
-  return timeline.unsynced.find((c) => c.clip_id === clipId);
+  let index = clipIndex.get(timeline);
+  if (!index) {
+    index = new Map();
+    for (const g of timeline.groups) for (const c of g.clips) index.set(c.clip_id, c);
+    for (const c of timeline.unsynced) index.set(c.clip_id, c);
+    clipIndex.set(timeline, index);
+  }
+  return index.get(clipId);
+}
+
+// ------------------------------------------------------------- moves shown before the engine confirms them
+//
+// A drag or a nudge moves the clip on screen at once. The engine re-solves the timeline (up to a second on a
+// project of thousands of clips) and its answer replaces the preview. A move is kept as an offset from the clip
+// the timeline is anchored on, so it stays right when the engine's answer shifts the timeline's origin.
+
+interface PendingMove {
+  anchorId: number;
+  offsetS: number;
+  token: number;
+  sent: boolean;
+}
+
+const NUDGE_SETTLE_MS = 350;
+const pendingMoves = new Map<number, PendingMove>();
+let moveToken = 0;
+let nudgeTimer: ReturnType<typeof setTimeout> | null = null;
+let inFlight = 0;
+/** The timeline as the engine last sent it, before pending moves are applied, and what the store shows for it. */
+let engineTimeline: Timeline | null = null;
+let shownTimeline: Timeline | null = null;
+
+/** The engine's timeline with the moves it has not confirmed yet. */
+function withPendingMoves(timeline: Timeline | null): Timeline | null {
+  if (!timeline || pendingMoves.size === 0) return timeline;
+  const starts = new Map<number, number>();
+  for (const [clipId, move] of pendingMoves) {
+    const clip = findClip(timeline, clipId);
+    const anchor = findClip(timeline, move.anchorId);
+    if (clip?.group == null || anchor?.start_s == null || anchor.group !== clip.group) continue;
+    starts.set(clipId, anchor.start_s + move.offsetS);
+  }
+  if (starts.size === 0) return timeline;
+  const groups = timeline.groups.map((g) =>
+    g.clips.some((c) => starts.has(c.clip_id))
+      ? { ...g, clips: g.clips.map((c) => (starts.has(c.clip_id) ? { ...c, start_s: starts.get(c.clip_id)! } : c)) }
+      : g,
+  );
+  return { ...timeline, groups };
+}
+
+/** What the store shows for a timeline from the engine. */
+function showTimeline(timeline: Timeline | null): Timeline | null {
+  engineTimeline = timeline;
+  shownTimeline = withPendingMoves(timeline);
+  return shownTimeline;
+}
+
+/** Show the pending moves again over the engine's timeline (the store's own, if it was set from elsewhere). */
+function reshow(): void {
+  const current = useApp.getState().timeline;
+  useApp.setState({ timeline: showTimeline(current === shownTimeline ? engineTimeline : current) });
+}
+
+const REFRESH_INTERVAL_MS = 4000;
+let refreshedVersion: number | null = null;
+let refreshing: Promise<void> | null = null;
+let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+let lastRefresh = 0;
+
+/**
+ * Reload the timeline when the media changed since it was last loaded (an import running in the background, or
+ * a project created and filled since). At most one reload every few seconds, whatever the project size.
+ */
+export function refreshIfStale(): void {
+  const { project } = useApp.getState();
+  if (!project || refreshTimer) return;
+  const version = useProd.getState().indexVersion;
+  if (engineTimeline !== null && version === refreshedVersion) return;
+  const wait = refreshing ? REFRESH_INTERVAL_MS : Math.max(0, REFRESH_INTERVAL_MS - (Date.now() - lastRefresh));
+  refreshTimer = setTimeout(() => {
+    refreshTimer = null;
+    if (refreshing) {
+      refreshIfStale();
+      return;
+    }
+    lastRefresh = Date.now();
+    refreshing = useApp
+      .getState()
+      .refresh()
+      .catch(() => undefined) // the project closed meanwhile
+      .finally(() => {
+        refreshing = null;
+        if (useProd.getState().indexVersion !== refreshedVersion) refreshIfStale();
+      });
+  }, wait);
+}
+
+function markUpdating(): void {
+  const updating = inFlight > 0 || pendingMoves.size > 0;
+  if (useApp.getState().updating !== updating) useApp.setState({ updating });
+}
+
+/** Count an engine request that changes the timeline, for the "Updating…" note. */
+async function tracked<T>(request: () => Promise<T>): Promise<T> {
+  inFlight += 1;
+  markUpdating();
+  try {
+    return await request();
+  } finally {
+    inFlight -= 1;
+    markUpdating();
+  }
+}
+
+function forgetMoves(): void {
+  if (nudgeTimer) clearTimeout(nudgeTimer);
+  nudgeTimer = null;
+  pendingMoves.clear();
+}
+
+/** Show `clipId` at `startS` now; the engine hears of it when the moves are flushed. */
+function stageMove(clipId: number, anchor: TimelineClip, startS: number): void {
+  pendingMoves.set(clipId, {
+    anchorId: anchor.clip_id,
+    offsetS: offsetForStart(startS, anchor),
+    token: ++moveToken,
+    sent: false,
+  });
+  reshow();
+  markUpdating();
+}
+
+/** Send the moves not sent yet, and wait for the engine's timeline. */
+async function flushMoves(): Promise<void> {
+  if (nudgeTimer) clearTimeout(nudgeTimer);
+  nudgeTimer = null;
+  const unsent = [...pendingMoves].filter(([, move]) => !move.sent);
+  await Promise.all(
+    unsent.map(([clipId, move]) => {
+      move.sent = true;
+      return sendCorrection(
+        { kind: "offset", clip_id: clipId, other_clip_id: move.anchorId, offset_s: move.offsetS },
+        {
+          clipId,
+          token: move.token,
+        },
+      );
+    }),
+  );
+}
+
+function scheduleFlush(): void {
+  if (nudgeTimer) clearTimeout(nudgeTimer);
+  nudgeTimer = setTimeout(() => void flushMoves(), NUDGE_SETTLE_MS);
+}
+
+/** Add a correction and show the engine's new timeline. A failed move is taken back off the screen. */
+async function sendCorrection(
+  params: { kind: CorrectionKind; clip_id: number; other_clip_id?: number; offset_s?: number },
+  move?: { clipId: number; token: number },
+): Promise<void> {
+  const app = useApp.getState();
+  const project = app.project?.path;
+  const settle = () => {
+    if (move && pendingMoves.get(move.clipId)?.token === move.token) pendingMoves.delete(move.clipId);
+  };
+  await tracked(() =>
+    app.run(async () => {
+      try {
+        const timeline = await call("correction.add", params);
+        if (useApp.getState().project?.path !== project) return; // another project was opened meanwhile
+        settle();
+        useApp.setState({ timeline: showTimeline(timeline), matches: {} });
+      } catch (err) {
+        settle();
+        reshow();
+        throw err;
+      }
+      const selected = useApp.getState().selected;
+      if (selected !== null) void useApp.getState().loadMatches(selected);
+    }),
+  );
 }
 
 /**
@@ -166,12 +352,16 @@ export const useApp = create<AppState>((set, get) => ({
   recent: loadRecent(),
   exportOpen: false,
   lastExport: null,
+  updating: false,
 
   init() {
     const off = bridge().onEvent((event) => handleEvent(event));
     void bridge()
       .engineStatus()
-      .then((engine) => set({ engine }));
+      .then((engine) => {
+        set({ engine });
+        if (engine.state === "ready" && wasReloaded()) void adoptOpenProject();
+      });
     return off;
   },
 
@@ -220,21 +410,32 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   async closeProject() {
+    await flushMoves();
     await get().run(async () => {
       await call("project.close", {});
-      set({ project: null, timeline: null, media: { clips: [], devices: [] }, selected: null, lastSync: null });
+      forgetMoves();
+      set({
+        project: null,
+        timeline: showTimeline(null),
+        media: { clips: [], devices: [] },
+        selected: null,
+        lastSync: null,
+      });
       useProd.getState().reset(null);
     });
   },
 
   async refresh() {
     if (!get().project) return;
+    const version = useProd.getState().indexVersion;
     const [media, timeline, project] = await Promise.all([
       call("media.list", {}),
       call("timeline.get", {}),
       call("project.info", {}),
     ]);
-    set({ media, timeline, project });
+    if (get().project?.path !== project.path) return; // another project was opened meanwhile
+    refreshedVersion = version;
+    set({ media, timeline: showTimeline(timeline), project });
   },
 
   async updateSettings(settings) {
@@ -279,28 +480,20 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   async correct(kind, clipId, otherClipId, offsetS) {
-    await get().run(async () => {
-      const timeline = await call("correction.add", {
-        kind,
-        clip_id: clipId,
-        ...(otherClipId !== undefined ? { other_clip_id: otherClipId } : {}),
-        ...(offsetS !== undefined ? { offset_s: offsetS } : {}),
-      });
-      set({ timeline, matches: {} });
-      if (get().selected !== null) void get().loadMatches(get().selected!);
+    await flushMoves(); // corrections apply in the order they were made
+    await sendCorrection({
+      kind,
+      clip_id: clipId,
+      ...(otherClipId !== undefined ? { other_clip_id: otherClipId } : {}),
+      ...(offsetS !== undefined ? { offset_s: offsetS } : {}),
     });
   },
 
   async moveClip(clipId, startS) {
-    const { timeline } = get();
-    const g = displayedGroup(get());
-    const anchor = g && anchorClip(g, timeline!.reference_clip_id);
-    if (!g || !anchor) return;
-    if (anchor.clip_id === clipId) {
-      get().toast("info", "The reference clip defines the timeline; move the other clips instead.");
-      return;
-    }
-    await get().correct("offset", clipId, anchor.clip_id, offsetForStart(startS, anchor));
+    const anchor = movableAnchor(clipId);
+    if (!anchor) return;
+    stageMove(clipId, anchor, startS);
+    await flushMoves();
   },
 
   async confirm(clipId) {
@@ -322,20 +515,18 @@ export const useApp = create<AppState>((set, get) => ({
     await get().moveClip(clipId, cursorS);
   },
 
-  async nudge(clipId, deltaS) {
+  nudge(clipId, deltaS) {
+    // The timeline already shows earlier nudges, so rapid key presses add up.
     const clip = findClip(get().timeline, clipId);
     if (clip?.start_s === null || clip?.start_s === undefined) return;
-    // Rapid key presses must add up, even before the previous nudge's timeline has come back.
-    const target = (nudgeTargets.get(clipId) ?? clip.start_s) + deltaS;
-    nudgeTargets.set(clipId, target);
-    try {
-      await get().moveClip(clipId, target);
-    } finally {
-      if (nudgeTargets.get(clipId) === target) nudgeTargets.delete(clipId);
-    }
+    const anchor = movableAnchor(clipId);
+    if (!anchor) return;
+    stageMove(clipId, anchor, clip.start_s + deltaS);
+    scheduleFlush();
   },
 
   async snap(clipId) {
+    await flushMoves();
     const { timeline } = get();
     const g = displayedGroup(get());
     const clip = findClip(timeline, clipId);
@@ -369,26 +560,44 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   async undo() {
-    await get().run(async () => set({ timeline: await call("correction.undo", {}) }));
+    await flushMoves();
+    await get().run(() =>
+      tracked(async () => set({ timeline: showTimeline(await call("correction.undo", {})), matches: {} })),
+    );
   },
 
   async redo() {
-    await get().run(async () => set({ timeline: await call("correction.redo", {}) }));
+    await flushMoves();
+    await get().run(() =>
+      tracked(async () => set({ timeline: showTimeline(await call("correction.redo", {})), matches: {} })),
+    );
   },
 
   async setReference(clipId) {
+    await flushMoves();
     await get().updateSettings({ reference_clip_id: clipId });
-    await get().run(async () => set({ timeline: await call("sync.solve", {}) }));
+    await get().run(() => tracked(async () => set({ timeline: showTimeline(await call("sync.solve", {})) })));
   },
 
   // ------------------------------------------------------------ export
 
   openExport() {
-    if (!get().timeline?.groups.length) {
-      get().toast("info", "Synchronise first: there is no timeline to export yet.");
+    const open = () => {
+      if (!get().timeline?.groups.length) {
+        get().toast("info", "Synchronise first: there is no timeline to export yet.");
+        return;
+      }
+      set({ exportOpen: true, lastExport: null });
+    };
+    // A project created and synchronised in this session may not have loaded its timeline yet.
+    if (get().timeline || !get().project) {
+      open();
       return;
     }
-    set({ exportOpen: true, lastExport: null });
+    void get().run(async () => {
+      await get().refresh();
+      open();
+    });
   },
 
   closeExport() {
@@ -398,6 +607,7 @@ export const useApp = create<AppState>((set, get) => ({
   async exportXml(options) {
     const project = get().project;
     if (!project) return undefined;
+    await flushMoves(); // export what the timeline shows
     const path = await bridge().chooseExportPath(project.name, options.format);
     if (!path) return undefined;
     return get().run(async () => {
@@ -450,6 +660,19 @@ export const useApp = create<AppState>((set, get) => ({
   },
 }));
 
+/** The clip of the displayed group that `clipId` is moved relative to, or undefined when it cannot be moved. */
+function movableAnchor(clipId: number): TimelineClip | undefined {
+  const state = useApp.getState();
+  const g = displayedGroup(state);
+  const anchor = g && anchorClip(g, state.timeline!.reference_clip_id);
+  if (!anchor) return undefined;
+  if (anchor.clip_id === clipId) {
+    state.toast("info", "The reference clip defines the timeline; move the other clips instead.");
+    return undefined;
+  }
+  return anchor;
+}
+
 function clamped(view: View): View {
   const { timelineWidth } = useApp.getState();
   const g = displayedGroup(useApp.getState());
@@ -459,10 +682,13 @@ function clamped(view: View): View {
 function afterOpen(project: ProjectSummary): void {
   const recent = [project.path, ...useApp.getState().recent.filter((p) => p !== project.path)];
   saveRecent(recent);
+  forgetMoves();
+  refreshedVersion = null;
   useApp.setState({
     project,
     recent,
-    timeline: null,
+    timeline: showTimeline(null),
+    updating: false,
     selected: null,
     group: 0,
     lastSync: null,
@@ -476,6 +702,25 @@ function afterOpen(project: ProjectSummary): void {
   useApp.getState().invalidatePeaks();
   useThumbs.getState().clear();
   useProd.getState().reset(project);
+}
+
+/** The window was reloaded (after a renderer crash, or Reload window), not opened. */
+function wasReloaded(): boolean {
+  const [entry] = performance.getEntriesByType?.("navigation") ?? [];
+  return (entry as PerformanceNavigationTiming | undefined)?.type === "reload";
+}
+
+/** After the window was reloaded, carry on with the project the engine still has open. */
+async function adoptOpenProject(): Promise<void> {
+  try {
+    const project = await call("project.info", {});
+    if (useApp.getState().project) return;
+    afterOpen(project);
+    await useApp.getState().refresh();
+    useApp.getState().fit();
+  } catch {
+    // no project is open: the window starts on Home
+  }
 }
 
 let peaksTimer: ReturnType<typeof setTimeout> | null = null;
@@ -493,7 +738,7 @@ async function afterSync(result: { status: string; error?: string; timeline?: Ti
   const app = useApp.getState();
   const prod = useProd.getState();
   if (result.status === "completed") {
-    if (result.timeline) useApp.setState({ timeline: result.timeline, matches: {} });
+    if (result.timeline) useApp.setState({ timeline: showTimeline(result.timeline), matches: {} });
     app.invalidatePeaks();
     await Promise.all([prod.loadSummary(), prod.loadIndex(), app.refresh()]);
     const summary = useProd.getState().summary;
@@ -550,7 +795,7 @@ function handleEvent(event: EngineEvent): void {
       } else if (event.params.kind === "sync") {
         const result = event.params.result as SyncRunResult;
         useApp.setState({
-          timeline: result.timeline,
+          timeline: showTimeline(result.timeline),
           lastSync: { pairs: result.pairs, reused: result.reused, matched: result.matched },
           matches: {},
         });

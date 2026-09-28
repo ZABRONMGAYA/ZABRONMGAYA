@@ -153,9 +153,10 @@ Implemented in `engine/src/mcsync/timecode.py` (M1).
 | Pick an alternative candidate | `ManualOffset` at that candidate's offset | Same as a drag |
 | Reject a match | `reject_pair(a, b)` | Edge ignored |
 | Exclude a clip | `exclude(clip)` | Clip leaves sync and export |
-| Undo / redo | Corrections are an append-only log with `undone_at` | Re-solve (milliseconds) |
+| Undo / redo | Corrections are an append-only log with `undone_at` | Re-solve (milliseconds; about 1 s at 4,000 clips) |
 
-The review queue lists every clip whose status is not `synced`, ordered by severity:
+The review queue lists every clip whose status is not `synced`, and clips that overlap another clip of their device
+or are offline. It is ordered by severity:
 
 1. conflicts;
 2. detached groups;
@@ -303,7 +304,7 @@ Reference machine: 8-core laptop (Apple M-series or recent x86), SSD, 16 GB RAM.
 | Audio alignment error (typical camera/recorder audio) | ≤ 1 ms | ≤ 0.1 ms; ~10 µs typical |
 | Pairwise match, 3 h vs 20 min | ≤ 2 s | 0.35 s (+1.4 s signal preparation) |
 | Full sync, 100 clips around 2 × 3 h recorders | ≤ 3 min after extraction | not measured yet: at 60 ms/pair on one core, ~3,700 pairs take ~4 min serially; parallelised in M3 |
-| Re-solve after a manual edit | ≤ 50 ms | 2.4 ms for 24 clips / 221 pairs |
+| Re-solve after a manual edit | ≤ 50 ms | 2.4 ms for 24 clips / 221 pairs; 0.8–1.2 s for 4,230 clips / 26,624 matches (1.1.1, see `SCALABILITY_TEST_REPORT.md` §8) |
 | Extraction throughput | ≥ 50× real time per core (FFmpeg decode-bound) | M2 |
 | Engine memory | ≤ 2 GB for a 10 h project | about 3× the active analysis signals; memory-mapped in M2 |
 | UI | 60 fps timeline scroll/zoom with 300 clips | M4, software rendering (no GPU): panning at 59–60 fps (p95 16.8 ms); fast zooming at 53–55 fps (median 16.7 ms). Not yet measured on real hardware. |

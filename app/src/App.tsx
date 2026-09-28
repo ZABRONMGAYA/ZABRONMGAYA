@@ -1,6 +1,7 @@
 import { type DragEvent, useEffect, useRef, useState } from "react";
 
 import { bridge, call } from "./api/client";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Toasts } from "./components/Toasts";
 import { ExportDialog } from "./features/export/ExportDialog";
 import { Inspector } from "./features/inspector/Inspector";
@@ -88,27 +89,43 @@ export function App() {
         onDrop={project ? onDrop : undefined}
       >
         {!project ? (
-          <Home />
+          <ErrorBoundary key="home" what="the home screen">
+            <Home />
+          </ErrorBoundary>
         ) : stage === "media" ? (
-          <MediaScreen />
+          <ErrorBoundary key="media" what="the media browser">
+            <MediaScreen />
+          </ErrorBoundary>
         ) : stage === "sync" ? (
-          <SyncScreen />
+          <ErrorBoundary key="sync" what="the synchronisation screen">
+            <SyncScreen />
+          </ErrorBoundary>
         ) : (
           <div className="workspace" data-testid="workspace">
             <div className="panes">
-              <TimelinePanel />
+              <ErrorBoundary key="timeline" what="the timeline">
+                <TimelinePanel />
+              </ErrorBoundary>
               <aside className="side">
-                <ReviewQueue />
-                <Inspector />
+                <ErrorBoundary key="side" what="the clip details">
+                  <ReviewQueue />
+                  <Inspector />
+                </ErrorBoundary>
               </aside>
             </div>
           </div>
         )}
       </div>
       <StatusBar />
-      <ExportDialog />
-      <Settings />
-      <Dialogs />
+      <ErrorBoundary what="the export dialog" onClose={() => useApp.getState().closeExport()}>
+        <ExportDialog />
+      </ErrorBoundary>
+      <ErrorBoundary what="the settings" onClose={() => useProd.getState().closeSettings()}>
+        <Settings />
+      </ErrorBoundary>
+      <ErrorBoundary what="the dialog" onClose={() => useProd.getState().openDialog(null)}>
+        <Dialogs />
+      </ErrorBoundary>
       <Toasts />
     </div>
   );

@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import type { Bridge, EngineMethods, Method, Timeline } from "../src/api/contract";
-import { useApp } from "../src/state/store";
+import { findClip, useApp } from "../src/state/store";
 import { clip, group } from "./fixtures";
 
 type Handler = (params: unknown) => unknown;
@@ -48,27 +48,85 @@ function installBridge(handlers: Partial<Record<Method, Handler>>): unknown[][] 
 }
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const shownStart = (clipId = 1) => findClip(useApp.getState().timeline, clipId)!.start_s;
+const offsetsSent = (calls: unknown[][]) =>
+  calls.filter(([m]) => m === "correction.add").map(([, p]) => (p as { offset_s: number }).offset_s.toFixed(3));
 
 beforeEach(() => {
   useApp.setState({ timeline: timeline(10), group: 0, selected: 1, toasts: [], matches: {}, snaps: {} });
 });
 
 describe("corrections", () => {
-  it("adds up rapid nudges before the engine answers", async () => {
-    let start = 10;
+  it("shows rapid nudges at once and sends them as one correction when they stop", async () => {
     const calls = installBridge({
       "correction.add": async (p) => {
         await delay(20);
-        start = (p as { offset_s: number }).offset_s;
-        return timeline(start);
+        return timeline((p as { offset_s: number }).offset_s);
       },
       "sync.matches": () => [],
     });
     const { nudge } = useApp.getState();
-    await Promise.all([nudge(1, 0.04), nudge(1, 0.04), nudge(1, 0.04)]);
-    const offsets = calls.filter(([m]) => m === "correction.add").map(([, p]) => (p as { offset_s: number }).offset_s);
-    expect(offsets.map((o) => o.toFixed(3))).toEqual(["10.040", "10.080", "10.120"]);
-    expect(useApp.getState().timeline!.groups[0]!.clips[0]!.start_s).toBeCloseTo(10.12, 9);
+    nudge(1, 0.04);
+    nudge(1, 0.04);
+    nudge(1, 0.04);
+    expect(shownStart()).toBeCloseTo(10.12, 9);
+    expect(useApp.getState().updating).toBe(true);
+    expect(offsetsSent(calls)).toEqual([]);
+
+    await delay(450);
+    expect(offsetsSent(calls)).toEqual(["10.120"]);
+    expect(shownStart()).toBeCloseTo(10.12, 9);
+    expect(useApp.getState().updating).toBe(false);
+  });
+
+  it("moves a dragged clip at once and takes it back when the engine refuses", async () => {
+    installBridge({});
+    const moved = useApp.getState().moveClip(1, 42);
+    expect(shownStart()).toBe(42);
+    await moved;
+    expect(shownStart()).toBe(10);
+    expect(useApp.getState().toasts.at(-1)).toMatchObject({ kind: "error", text: "no correction.add" });
+    expect(useApp.getState().updating).toBe(false);
+  });
+
+  it("keeps showing a nudge made while an earlier move is on its way", async () => {
+    const calls = installBridge({
+      "correction.add": async (p) => {
+        await delay(30);
+        return timeline((p as { offset_s: number }).offset_s);
+      },
+      "sync.matches": () => [],
+    });
+    const moved = useApp.getState().moveClip(1, 42);
+    useApp.getState().nudge(1, 1);
+    expect(shownStart()).toBe(43);
+    await moved; // the engine's timeline for the drag (42) arrives; the nudge is not sent yet
+    expect(shownStart()).toBe(43);
+    await delay(450);
+    expect(offsetsSent(calls)).toEqual(["42.000", "43.000"]);
+    expect(shownStart()).toBe(43);
+  });
+
+  it("sends waiting nudges before an undo", async () => {
+    const calls = installBridge({
+      "correction.add": (p) => timeline((p as { offset_s: number }).offset_s),
+      "correction.undo": () => timeline(10),
+      "sync.matches": () => [],
+    });
+    useApp.getState().nudge(1, 0.5);
+    await useApp.getState().undo();
+    expect(calls.map(([m]) => m).filter((m) => m !== "sync.matches")).toEqual(["correction.add", "correction.undo"]);
+    expect(shownStart()).toBe(10);
+  });
+
+  it("finds clips by id on the timeline and among unplaced clips", () => {
+    const t = timeline(10);
+    const unplaced = clip(3, null, 50);
+    const withUnplaced = { ...t, unsynced: [unplaced] };
+    expect(findClip(withUnplaced, 1)?.start_s).toBe(10);
+    expect(findClip(withUnplaced, 3)).toBe(unplaced);
+    expect(findClip(withUnplaced, 99)).toBeUndefined();
+    expect(findClip(null, 1)).toBeUndefined();
   });
 
   it("moves clips relative to the reference and refuses to move the reference", async () => {

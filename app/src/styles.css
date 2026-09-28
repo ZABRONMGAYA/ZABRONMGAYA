@@ -334,7 +334,8 @@ h3 {
 
 .kind-icon {
   width: 18px;
-  text-align: center;
+  display: inline-flex;
+  justify-content: center;
   flex: none;
 }
 
@@ -441,21 +442,28 @@ h3 {
   color: var(--muted);
 }
 
-.review ul {
-  list-style: none;
-  margin: 0;
-  padding: 0;
+.review-list {
   max-height: 220px;
   overflow-y: auto;
 }
 
+.review ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  position: relative;
+}
+
 .review-item {
+  position: absolute;
+  left: 0;
+  right: 0;
   display: flex;
   flex-direction: column;
-  padding: 5px 8px 5px 10px;
+  justify-content: center;
+  padding: 0 8px 0 10px;
   border-left: 3px solid var(--warn);
   border-radius: var(--sy-radius);
-  margin-bottom: 4px;
   background: var(--panel-2);
   cursor: pointer;
 }
@@ -472,6 +480,13 @@ h3 {
 
 .review-item.selected {
   background: color-mix(in srgb, var(--sy-brand-primary) 18%, transparent);
+}
+
+.review-item .clip-name,
+.review-item .reason {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .review-item .reason {
@@ -764,4 +779,42 @@ input[aria-invalid="true"] {
 .error-text {
   color: var(--error);
   margin: 0;
+}
+
+.timeline-updating {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.timeline-updating .sy-spin {
+  animation: sy-spin var(--sy-dur-spinner) linear infinite;
+}
+
+/* A view that failed to render (ErrorBoundary). */
+.sy-error-view {
+  display: grid;
+  place-items: center;
+  min-height: 0;
+  height: 100%;
+}
+
+.sy-error-view__detail {
+  display: block;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--sy-text-3);
+  word-break: break-word;
+}
+
+.sy-error-view--overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: var(--sy-bg);
+}
+
+.sy-error-view__actions {
+  display: flex;
+  gap: 8px;
 }

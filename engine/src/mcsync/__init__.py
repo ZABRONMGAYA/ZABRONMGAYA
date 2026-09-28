@@ -7,4 +7,4 @@ The Electron/React shell talks to it over JSON-RPC (see
 ``docs/ARCHITECTURE.md``).
 """
 
-__version__ = "1.1.0"
+__version__ = "1.1.1"

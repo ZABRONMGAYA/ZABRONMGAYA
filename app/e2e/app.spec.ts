@@ -138,6 +138,19 @@ test("finds clips with the search grammar and bins", async () => {
   await page.getByRole("button", { name: "Grid" }).click();
 });
 
+test("explains the timeline before the first synchronisation", async () => {
+  // A new project's timeline used to open blank (and count 0 clips) until the project was reopened.
+  const n = Object.keys(expected).length;
+  await page.getByTestId("stage-timeline").click();
+  const empty = page.getByTestId("timeline-empty");
+  await expect(empty).toContainText("Not synchronised yet");
+  await expect(empty).toContainText(`${n} clips are ready to line up`);
+  await expect(page.getByTestId("timeline-sync")).toBeVisible();
+  await expect(page.getByTestId("statusbar-clips")).toHaveText(`${n} clips`);
+  await expect(page.getByTestId("review-queue")).toHaveCount(0); // nothing to review before a sync
+  await page.getByTestId("stage-media").click();
+});
+
 test("synchronises every clip to its true position", async () => {
   // Settings → Synchronization: the cameras' timecode was jam-synced on this shoot.
   await page.getByTestId("open-settings").click();

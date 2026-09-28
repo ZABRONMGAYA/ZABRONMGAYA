@@ -1,12 +1,13 @@
-// The timeline: group tabs, zoom, the synchronised tracks, and the clips that could not be placed.
-import { Redo2, Undo2 } from "lucide-react";
+// The timeline: group tabs, zoom, the synchronised tracks, and the clips that could not be placed. Before the
+// first synchronisation it says what is missing and offers the next step.
+import { Import, LoaderCircle, Redo2, Undo2, Waypoints } from "lucide-react";
 import { useEffect } from "react";
 
 import type { Session } from "../../api/contract";
-import { Select, shortcut } from "../../design-system/components";
+import { Button, EmptyState, Select, SyncoraSymbol, shortcut } from "../../design-system/components";
 import { formatDuration, formatTime, parseRate } from "../../lib/format";
 import { useProd } from "../../state/production";
-import { displayedGroup, findClip, useApp, usePick } from "../../state/store";
+import { displayedGroup, findClip, refreshIfStale, useApp, usePick } from "../../state/store";
 import { Tracks } from "./Tracks";
 import { frameDuration } from "./geometry";
 
@@ -30,32 +31,155 @@ function useNudgeKeys(): void {
       if (!clip || clip.start_s === null) return;
       e.preventDefault();
       const step = e.altKey ? 0.001 : frameDuration(parseRate(clip.frame_rate)) * (e.shiftKey ? 10 : 1);
-      void nudge(clip.clip_id, e.key === "ArrowLeft" ? -step : step);
+      nudge(clip.clip_id, e.key === "ArrowLeft" ? -step : step);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 }
 
+/** Chips drawn for unplaced clips; "more…" lists them all in the media browser (search "unsynchronized"). */
+const UNPLACED_SHOWN = 60;
+
 function UnplacedStrip() {
-  const { timeline, media, selected, select } = usePick("timeline", "media", "selected", "select");
+  const { timeline, selected, select } = usePick("timeline", "selected", "select");
   const unplaced = timeline ? timeline.unsynced : [];
-  if (!timeline || unplaced.length === 0) return null;
-  const names = new Map(media.clips.map((c) => [c.clip_id, c]));
+  // Before the first synchronisation every clip is unplaced: the empty state explains that instead.
+  if (!timeline || timeline.groups.length === 0 || unplaced.length === 0) return null;
+  const more = unplaced.length - UNPLACED_SHOWN;
   return (
     <div className="unplaced" data-testid="unplaced">
-      <span className="muted">Not placed ({unplaced.length}):</span>
-      {unplaced.map((clip) => (
+      <span className="muted">Not placed ({unplaced.length.toLocaleString()}):</span>
+      {unplaced.slice(0, UNPLACED_SHOWN).map((clip) => (
         <button
           key={clip.clip_id}
           className={`chip ${selected === clip.clip_id ? "selected" : ""} ${clip.flags.includes("excluded") ? "excluded" : ""}`}
           onClick={() => select(clip.clip_id)}
-          title={names.get(clip.clip_id)?.path ?? clip.path}
+          title={`${clip.device_name} · ${clip.path}`}
           data-testid={`unplaced-${clip.name}`}
         >
           {clip.name}
         </button>
       ))}
+      {more > 0 && (
+        <button
+          className="chip"
+          onClick={() => {
+            useProd.getState().setBin("all");
+            useProd.getState().setQuery("unsynchronized");
+            useProd.getState().setStage("media");
+          }}
+          title="Show every clip that is not placed in the media browser"
+        >
+          {more.toLocaleString()} more…
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** The import view of the Media stage. */
+function openImport(): void {
+  useProd.getState().setImporting(true);
+  useProd.getState().setStage("media");
+}
+
+const PHASE_WORDS: Record<string, string> = {
+  waiting: "Waiting for analysis",
+  planning: "Finding candidate pairs",
+  matching: "Verifying matches",
+  extending: "Extended search",
+  solving: "Placing clips",
+};
+
+/** What the timeline shows when there is nothing to draw yet, and the next step. */
+function TimelineEmpty() {
+  const loaded = useProd((s) => s.indexVersion >= 0);
+  const clips = useProd((s) => s.rows.length);
+  const pipeline = useProd((s) => s.pipeline);
+  const timeline = useApp((s) => s.timeline);
+  const sync = pipeline?.sync;
+  const syncing = sync !== null && sync !== undefined && sync.phase !== "done";
+  const analyze = pipeline?.stages.analyze;
+  const analysed = analyze ? analyze.done + analyze.failed + analyze.skipped + analyze.cancelled : 0;
+  const toAnalyse = analyze ? analysed + analyze.pending + analyze.running : 0;
+
+  let content;
+  if (!loaded || (clips > 0 && !timeline)) {
+    content = <EmptyState icon={LoaderCircle} title="Loading the timeline" body="Reading the project…" />;
+  } else if (clips === 0) {
+    content = (
+      <EmptyState
+        icon={Import}
+        title="No media yet"
+        body="Import the recordings of the event (every camera, recorder and phone), then synchronise them. Original files are never modified."
+        action={
+          <Button variant="secondary" size="compact" onClick={openImport}>
+            Import media
+          </Button>
+        }
+      />
+    );
+  } else if (syncing) {
+    content = (
+      <EmptyState
+        icon={Waypoints}
+        title="Synchronising"
+        body={`${PHASE_WORDS[sync.phase] ?? "Working"} · ${clips.toLocaleString()} clips. The timeline appears here when the synchronisation finishes.`}
+        action={
+          <Button variant="secondary" size="compact" onClick={() => useProd.getState().setStage("sync")}>
+            Show progress
+          </Button>
+        }
+      />
+    );
+  } else if (clips < 2) {
+    content = (
+      <EmptyState
+        icon={Import}
+        title="One recording so far"
+        body="Import at least two recordings of the same event to line them up."
+        action={
+          <Button variant="secondary" size="compact" onClick={openImport}>
+            Import media
+          </Button>
+        }
+      />
+    );
+  } else {
+    content = (
+      <EmptyState
+        icon={Waypoints}
+        title="Not synchronised yet"
+        body={
+          <>
+            {clips.toLocaleString()} clips are ready to line up on a timeline.
+            {toAnalyse > analysed && (
+              <>
+                {" "}
+                Audio analysis: {analysed.toLocaleString()} / {toAnalyse.toLocaleString()} clips
+                {pipeline?.state === "paused" ? " (paused)" : ""}.
+              </>
+            )}
+          </>
+        }
+        action={
+          <Button
+            variant="primary"
+            size="compact"
+            onClick={() => void useProd.getState().startSync()}
+            data-testid="timeline-sync"
+          >
+            <SyncoraSymbol size={14} variant="paper" />
+            Sync all
+          </Button>
+        }
+      />
+    );
+  }
+  return (
+    <div className="timeline-empty" data-testid="timeline-empty">
+      {content}
     </div>
   );
 }
@@ -68,7 +192,7 @@ function groupLabel(group: number, sessions: Session[]): string {
 }
 
 export function TimelinePanel() {
-  const { timeline, group, setGroup, view, timelineWidth, cursorS, fit, media } = usePick(
+  const { timeline, group, setGroup, view, timelineWidth, cursorS, fit, updating } = usePick(
     "timeline",
     "group",
     "setGroup",
@@ -76,11 +200,14 @@ export function TimelinePanel() {
     "timelineWidth",
     "cursorS",
     "fit",
-    "media",
+    "updating",
   );
   useNudgeKeys();
   const current = displayedGroup({ timeline, group });
   const sessions = useProd((s) => s.sessions);
+  // Load the timeline on arrival, and again while media is still being added or read.
+  const indexVersion = useProd((s) => s.indexVersion);
+  useEffect(() => refreshIfStale(), [indexVersion]);
 
   return (
     <section className="timeline" data-testid="timeline">
@@ -117,6 +244,11 @@ export function TimelinePanel() {
           />
         )}
         <div className="grow" />
+        {updating && (
+          <span className="muted timeline-updating" data-testid="timeline-updating">
+            <LoaderCircle size={14} className="sy-spin" aria-hidden /> Updating…
+          </span>
+        )}
         <button
           className="small"
           onClick={() => void useApp.getState().undo()}
@@ -148,17 +280,7 @@ export function TimelinePanel() {
         )}
       </div>
 
-      {current ? (
-        <Tracks group={current} />
-      ) : (
-        <div className="timeline-empty">
-          <p className="muted">
-            {media.clips.length < 2
-              ? "Import at least two recordings of the same event."
-              : "Press Sync all to line the recordings up on a timeline."}
-          </p>
-        </div>
-      )}
+      {current ? <Tracks group={current} /> : <TimelineEmpty />}
       <UnplacedStrip />
     </section>
   );
