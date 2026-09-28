@@ -14,6 +14,7 @@ import {
 import { type ButtonHTMLAttributes, type ReactNode, useEffect, useId, useRef } from "react";
 
 import symbolDark from "./assets/syncora-symbol-dark.svg";
+import symbolLight from "./assets/syncora-symbol.svg";
 import symbolPaper from "./assets/syncora-symbol-paper-solid.svg";
 
 export type ButtonVariant =
@@ -70,18 +71,29 @@ export function Button({
   );
 }
 
-/** The brand mark: paper bars and red line on dark surfaces; all paper as the "Sync" action icon. */
+/**
+ * The brand mark: paper bars and red line on dark surfaces, ink bars on light ones (the theme picks, in base.css);
+ * all paper as the "Sync" action icon.
+ */
 export function SyncoraSymbol({ size = 20, variant = "dark" }: { size?: number; variant?: "dark" | "paper" }) {
-  return (
+  const img = (src: string, className?: string) => (
     <img
-      src={variant === "paper" ? symbolPaper : symbolDark}
+      src={src}
       width={size}
       height={size}
       alt=""
       aria-hidden
       draggable={false}
+      className={className}
       style={{ display: "block", flex: "none" }}
     />
+  );
+  if (variant === "paper") return img(symbolPaper);
+  return (
+    <>
+      {img(symbolDark, "sy-symbol--on-dark")}
+      {img(symbolLight, "sy-symbol--on-light")}
+    </>
   );
 }
 

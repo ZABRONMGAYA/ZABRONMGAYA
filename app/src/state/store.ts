@@ -22,6 +22,7 @@ import type {
   TimelineGroup,
 } from "../api/contract";
 import { formatOffset } from "../lib/format";
+import { defaultPresetId, presetById } from "../lib/presets";
 import { type View, anchorClip, clampView, fitView, offsetForStart, zoomAround } from "../features/timeline/geometry";
 import { forgetPeaks } from "../features/timeline/peaks";
 import { transcriptsChanged, useAnalyze } from "./analyze";
@@ -90,7 +91,8 @@ export interface AppState {
   dismiss(id: number): void;
   run<T>(action: () => Promise<T>): Promise<T | undefined>;
 
-  newProject(): Promise<void>;
+  /** Create a project with a preset's settings (the default preset when none is given). */
+  newProject(presetId?: string): Promise<void>;
   openProject(path?: string): Promise<void>;
   closeProject(): Promise<void>;
   refresh(): Promise<void>;
@@ -391,11 +393,15 @@ export const useApp = create<AppState>((set, get) => ({
 
   // ------------------------------------------------------------ project
 
-  async newProject() {
+  async newProject(presetId) {
     const path = await bridge().chooseProjectToCreate("Untitled project");
     if (!path) return;
     await get().run(async () => {
-      const project = await call("project.create", { path });
+      let project = await call("project.create", { path });
+      const preset = presetById(presetId ?? defaultPresetId());
+      if (Object.keys(preset.settings).length) {
+        project = { ...project, settings: await call("project.update_settings", preset.settings) };
+      }
       afterOpen(project);
     });
   },

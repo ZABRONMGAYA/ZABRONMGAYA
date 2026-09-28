@@ -33,7 +33,7 @@ Screenshots come from the end-to-end suites (`app/e2e`), taken at 1440 × 900 in
 |---|---|---|
 | S00 Splash | not implemented | The window opens on Home; the status bar shows the engine starting. Open item #1 (dark or light splash) remains unresolved. |
 | S01 Home | implemented | Recent projects, New / Open project. D-03 covers the sidebar. |
-| S02 New project | partial | New project asks where to save the `.syncora` file (native dialog) and opens the import view. The S02 form (name, frame rate, preset) is not built. |
+| S02 New project | partial | New project asks where to save the `.syncora` file (native dialog), applies the default preset (D-03) and opens the import view. The S02 form (name, frame rate) is not built. |
 | S03 Media import | implemented | Drop or browse files and folders; live counts per stage while files are found and read. When processing is paused, the progress line says so and offers Resume (media added while paused waits for it). |
 | S04 Media browser | implemented | Windowed grid and list for thousands of clips, bins (cameras, groups, review, unmatched, offline, duplicates, failed), search grammar, multi-select and bulk actions. See D-05 and D-06. |
 | S05 Analysis | implemented | Stage progress list, source progress and activity. See D-07. |
@@ -59,7 +59,10 @@ project-switcher menu is not drawn (**open #10**): the project name is a label, 
 project.
 
 **D-03 Home sidebar (open #10).** Projects, Presets and Learn pages are not drawn. Projects opens a project file.
-Presets and Learn are disabled, with a tooltip.
+Presets and Learn use the Home layout: Presets lists starting settings for kinds of shoot (Standard, Wedding and
+events, Jam-synced timecode, Interview and podcast, Run-and-gun documentary), each with New project and Make default;
+the default preset applies to every new project. Learn gives the six steps of the S14 onboarding as a page, with
+tips for reliable sync.
 
 **D-04 Large-production rules.** The handoff draws a 46-clip project. At 4,000+ clips the same components are used,
 with three changes: lists render only visible rows, counts use thousands separators, and per-clip rows are grouped

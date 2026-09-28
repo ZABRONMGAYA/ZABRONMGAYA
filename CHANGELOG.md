@@ -40,6 +40,8 @@ Transcripts, speakers, search and AI sync, all on your computer; every screen an
   and proposes placements for review, never locked.
 - **Settings:** AI (models, downloads, fallback), Transcription (model, language), Appearance (dark, light,
   system), Media, Proxy, Export defaults, Keyboard shortcuts, Privacy and Updates.
+- **Presets and Learn** on Home: starting settings for kinds of shoot (applied to new projects), and a six-step
+  guide with tips for reliable sync.
 - `mcsync transcribe FILE` on the command line.
 
 ### Changed

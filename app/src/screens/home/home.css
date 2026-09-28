@@ -232,3 +232,115 @@
   gap: 6px;
   align-items: center;
 }
+
+/* Presets and Learn (not drawn: the Home layout). */
+.sy-home__lead {
+  margin: 0;
+  max-width: 760px;
+  line-height: 1.5;
+}
+.sy-presets {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
+}
+.sy-preset {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 20px;
+  background: var(--sy-surface);
+  border: 1px solid var(--sy-border);
+}
+.sy-preset--default {
+  border-color: var(--sy-text);
+}
+.sy-preset__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.sy-preset h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 800;
+}
+.sy-preset p {
+  margin: 0;
+  color: var(--sy-text-2);
+  line-height: 1.5;
+  flex: 1;
+}
+.sy-preset ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.sy-preset li {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--sy-text-2);
+  border: 1px solid var(--sy-divider);
+  padding: 2px 6px;
+}
+.sy-preset__chip {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  background: var(--sy-text);
+  color: var(--sy-bg);
+}
+.sy-preset__actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.sy-learn {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-top: 2px solid var(--sy-divider);
+  max-width: 900px;
+}
+.sy-learn li {
+  display: grid;
+  grid-template-columns: 48px 1fr;
+  gap: 16px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--sy-border);
+}
+.sy-learn__n {
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--sy-brand-accent);
+  padding-top: 4px;
+}
+.sy-learn h2 {
+  margin: 0 0 4px;
+  font-size: 18px;
+  font-weight: 800;
+}
+.sy-learn p {
+  margin: 0;
+  color: var(--sy-text-2);
+  line-height: 1.5;
+}
+.sy-learn__tips {
+  margin: 12px 0 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--sy-text-2);
+  line-height: 1.5;
+  max-width: 900px;
+}

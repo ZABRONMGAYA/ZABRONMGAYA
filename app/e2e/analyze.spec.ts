@@ -92,10 +92,25 @@ test.afterAll(async () => {
   fs.rmSync(work, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 });
 });
 
+test("Home has working Presets and Learn pages", async () => {
+  await page.getByTestId("home-presets").click();
+  await expect(page.getByTestId("presets-page")).toContainText("Wedding and events");
+  await page.getByTestId("preset-wedding").getByRole("button", { name: "Make default" }).click();
+  await expect(page.getByTestId("preset-wedding")).toContainText("Default");
+  await page.getByTestId("home-learn").click();
+  await expect(page.getByTestId("learn-page")).toContainText("Analyze with AI");
+  await page.getByRole("button", { name: "Home", exact: true }).click();
+});
+
 test("imports and synchronises a recorder and a camera", async () => {
   await expect(page.getByTestId("new-project")).toBeEnabled();
   await answerDialogs({ save: path.join(work, "Toast.syncora"), open: [path.join(work, "Toast")] });
   await page.getByTestId("new-project").click();
+  // The default preset (Wedding and events) switched the AI fallback on for the new project.
+  await page.getByTestId("open-settings").click();
+  await page.getByTestId("settings-synchronization").click();
+  await expect(page.getByRole("switch", { name: "AI fallback" })).toHaveAttribute("aria-checked", "true");
+  await page.getByRole("button", { name: "Close settings" }).click();
   await page.getByTestId("import-folder").click();
   await expect(page.getByTestId("bin-clip-ZOOM0001.WAV")).toBeVisible();
   await expect(page.getByTestId("bin-clip-C0001.MOV")).toBeVisible();
