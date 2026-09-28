@@ -148,10 +148,12 @@ function selectBin(bin: Bin): void {
 function Banners() {
   const offline = useProd((s) => s.offline);
   const rows = useProd((s) => s.rows);
-  const undecided = useMemo(
-    () => rows.filter((r) => r.duplicate_of !== null && r.duplicate_decision === null).length,
-    [rows],
-  );
+  const { copies, likely } = useMemo(() => {
+    const undecided = rows.filter((r) => r.duplicate_of !== null && r.duplicate_decision === null);
+    const likely = undecided.filter((r) => r.duplicate_reason === "probable").length;
+    return { copies: undecided.length - likely, likely };
+  }, [rows]);
+  const undecided = copies + likely;
   const volumes = offline?.volumes.filter((v) => !v.ignored) ?? [];
   return (
     <>
@@ -198,9 +200,18 @@ function Banners() {
           <CopyCheck size={20} className="sy-banner__icon" aria-hidden />
           <div>
             <div className="sy-banner__title">
-              {undecided} possible duplicate{undecided === 1 ? "" : "s"} left out of sync
+              {[
+                copies > 0 && `${copies} identical cop${copies === 1 ? "y" : "ies"} left out of sync`,
+                likely > 0 && `${likely} possible duplicate${likely === 1 ? "" : "s"} kept in sync`,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
             </div>
-            <div className="sy-banner__body">Copies of files already in the project. Nothing is deleted.</div>
+            <div className="sy-banner__body">
+              {likely > 0
+                ? "Possible duplicates share a name, recording time and length with another file, as clips of cameras started together can. They stay in until you choose. Nothing is deleted."
+                : "Copies of files already in the project. Nothing is deleted."}
+            </div>
           </div>
           <div className="sy-banner__actions">
             <Button variant="secondary" size="compact" onClick={() => useProd.getState().openDialog("duplicates")}>

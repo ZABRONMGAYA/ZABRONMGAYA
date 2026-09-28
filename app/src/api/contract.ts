@@ -182,6 +182,8 @@ export interface MediaRow {
   media_status: "online" | "offline" | "changed";
   duplicate_of: number | null;
   duplicate_decision: "keep" | "ignore" | null;
+  /** identical: the same bytes (left out until kept); probable: same name, time and length (kept until ignored). */
+  duplicate_reason: "identical" | "probable" | null;
   probe: TaskStatus | null;
   analysis: string | null;
   sync_status: PlacementStatus | null;

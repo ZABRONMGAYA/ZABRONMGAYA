@@ -1,6 +1,6 @@
 // Electron main process: window, menus, dialogs, and the engine child process.
 // It holds no business logic: renderer calls go to the engine unchanged (allow-listed).
-import { promises as fs } from "node:fs";
+import { existsSync, promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -46,6 +46,15 @@ function send(event: EngineEvent): void {
 engine.on("event", (event: EngineEvent) => send(event));
 engine.on("status", (status) => send({ method: "engine.status", params: status }));
 
+/** The Syncora icon for the title bar and taskbar (macOS uses the app bundle's icon). */
+function windowIcon(): string | undefined {
+  if (process.platform === "darwin") return undefined;
+  const file = app.isPackaged
+    ? path.join(process.resourcesPath, "icon.png")
+    : path.join(here, "..", "build", "icon.png");
+  return existsSync(file) ? file : undefined;
+}
+
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 1440,
@@ -54,6 +63,7 @@ function createWindow(): BrowserWindow {
     minHeight: 640,
     backgroundColor: "#201e1d", // --sy-bg: no white flash before the renderer paints
     title: "Syncora",
+    icon: windowIcon(),
     show: false,
     webPreferences: {
       preload: path.join(here, "preload.cjs"),

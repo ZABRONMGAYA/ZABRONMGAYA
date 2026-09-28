@@ -32,7 +32,17 @@ _WAV_FORMATS = {"wav", "w64", "rf64"}
 
 
 class ProbeError(RuntimeError):
-    """ffprobe failed or the file has no usable streams."""
+    """ffprobe failed or the file has no usable streams.
+
+    ``skip``: the file is not footage Syncora can use (not a media file, no audio or video, a camera RAW format FFmpeg
+    cannot read). Such files are left out of the project without being reported as errors. Otherwise the file looks
+    like media but could not be read (damaged, incomplete, unreadable drive): an error the user should see.
+    ``reason``: what to tell the user, without the path."""
+
+    def __init__(self, message: str, *, reason: str | None = None, skip: bool = False) -> None:
+        super().__init__(message)
+        self.reason = reason or message
+        self.skip = skip
 
 
 @dataclass(frozen=True)
@@ -155,26 +165,78 @@ def probe(path: str | Path, tools: FFmpegTools | None = None, *, timeout_s: floa
     tools = tools or find_tools()
     path = Path(path)
     cmd = [tools.ffprobe, "-v", "error", "-print_format", "json", "-show_format", "-show_streams", str(path)]
+    ext = path.suffix.lower()
+    known = ext in VIDEO_EXTENSIONS or ext in AUDIO_EXTENSIONS
     try:
         flags = subprocess_flags()
         proc = subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True, timeout=timeout_s, **flags)
     except subprocess.TimeoutExpired as exc:
-        raise ProbeError(f"{path}: ffprobe timed out") from exc
+        raise ProbeError(
+            f"{path}: ffprobe timed out",
+            reason=f"Reading the file took more than {timeout_s:.0f} s (a slow or disconnected drive?)",
+        ) from exc
     if proc.returncode != 0:
         message = proc.stderr.decode(errors="replace").strip().splitlines()
-        raise ProbeError(f"{path}: {message[-1] if message else 'ffprobe failed'}")
+        detail = message[-1] if message else "ffprobe failed"
+        if ext in RAW_EXTENSIONS:
+            raise ProbeError(f"{path}: {detail}", skip=True, reason=RAW_EXTENSIONS[ext])
+        if not known:
+            raise ProbeError(f"{path}: {detail}", skip=True, reason="Not a media file")
+        raise ProbeError(f"{path}: {detail}", reason=f"Damaged or incomplete file ({_short_ffprobe(detail)})")
     data = json.loads(proc.stdout or b"{}")
     stat = path.stat()
     fmt = str(data.get("format", {}).get("format_name", ""))
-    bwf = read_bwf(path) if set(fmt.split(",")) & _WAV_FORMATS or path.suffix.lower() in (".wav", ".bwf") else None
-    return parse_probe(
-        data,
-        path=str(path),
-        size_bytes=stat.st_size,
-        mtime_ns=stat.st_mtime_ns,
-        bwf=bwf,
-        sidecar=read_sidecar(path),
-    )
+    bwf = read_bwf(path) if set(fmt.split(",")) & _WAV_FORMATS or ext in (".wav", ".bwf") else None
+
+    def parse() -> MediaInfo:
+        return parse_probe(
+            data,
+            path=str(path),
+            size_bytes=stat.st_size,
+            mtime_ns=stat.st_mtime_ns,
+            bwf=bwf,
+            sidecar=read_sidecar(path),
+        )
+
+    try:
+        return parse()
+    except ProbeError as exc:
+        if exc.reason != _NO_DURATION:
+            raise
+    # Some files state no duration (MPEG-TS and Matroska from some recorders, files still being copied): measure it
+    # from the timestamps of the last packets instead.
+    duration = _scan_duration(path, tools, timeout_s=timeout_s)
+    if not duration:
+        raise ProbeError(f"{path}: unknown duration", reason=_NO_DURATION)
+    data.setdefault("format", {})["duration"] = str(duration)
+    return parse()
+
+
+def _short_ffprobe(detail: str) -> str:
+    """FFmpeg's last error line without its path prefix."""
+    return detail.rsplit(": ", 1)[-1].strip().rstrip(".") or detail
+
+
+def _scan_duration(path: Path, tools: FFmpegTools, *, timeout_s: float) -> float | None:
+    """The end of the last packet of any stream, read from the file's packet headers (no decoding)."""
+    cmd = [tools.ffprobe, "-v", "error", "-show_entries", "packet=pts_time,dts_time,duration_time", "-of", "csv=p=0",
+           str(path)]  # fmt: skip
+    try:
+        proc = subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True, timeout=timeout_s * 4,
+                              **subprocess_flags())  # fmt: skip
+    except subprocess.TimeoutExpired:
+        return None
+    end = 0.0
+    for line in proc.stdout.decode(errors="replace").splitlines():
+        parts = line.split(",")
+        t = _float(parts[0]) if parts and parts[0] not in ("", "N/A") else None
+        if t is None and len(parts) > 1:
+            t = _float(parts[1])
+        if t is None:
+            continue
+        d = _float(parts[2]) if len(parts) > 2 else None
+        end = max(end, t + (d or 0.0))
+    return end if end > 0 else None
 
 
 def parse_probe(
@@ -202,14 +264,14 @@ def parse_probe(
         elif kind == "data" and s.get("codec_tag_string") == "tmcd":
             tmcd = s
     if not video and not audio:
-        raise ProbeError(f"{path}: no audio or video streams")
+        raise ProbeError(f"{path}: no audio or video streams", skip=True, reason="No audio or video in this file")
 
     duration = _float(fmt.get("duration"))
     primary = video[0] if video else audio[0]
     if primary.duration_s:
         duration = primary.duration_s
     if not duration or duration <= 0:
-        raise ProbeError(f"{path}: unknown duration")
+        raise ProbeError(f"{path}: unknown duration", reason=_NO_DURATION)
 
     video_tags = _lower_keys(_stream(data, video[0].index).get("tags")) if video else {}
     sidecar = sidecar or {}
@@ -279,8 +341,28 @@ def _video_stream(s: dict) -> VideoStreamInfo | None:
     r = parse_rate(s.get("r_frame_rate"))
     avg = parse_rate(s.get("avg_frame_rate"))
     rate = r or avg
+    frames = int(s["nb_frames"]) if str(s.get("nb_frames", "")).isdigit() else None
     if rate is None:
-        return None
+        # No stated rate (some AVI, MKV and screen recordings): frames over length, else treat as variable rate.
+        length = _float(s.get("duration"))
+        rate = parse_rate(str(frames / length)) if frames and length else None
+        if rate is None:
+            if s.get("codec_name") in _STILL_CODECS:
+                return None  # cover art or a still image
+            rate = Fraction(25)
+        avg = avg or rate
+        return VideoStreamInfo(
+            index=int(s["index"]),
+            codec=str(s.get("codec_name", "unknown")),
+            width=s.get("width"),
+            height=s.get("height"),
+            frame_rate=rate,
+            avg_frame_rate=avg,
+            is_vfr=True,
+            start_time_s=_float(s.get("start_time")) or 0.0,
+            duration_s=_float(s.get("duration")),
+            frame_count=frames,
+        )
     # Some VFR sources report a timebase-like r_frame_rate (e.g. 600/1).
     if avg is not None and r is not None and r > 2 * avg:
         rate = avg
@@ -432,18 +514,40 @@ def epoch_seconds(dt: datetime) -> float:
     return dt.timestamp()
 
 
+_NO_DURATION = "The file does not state its length, and it could not be measured"
+_STILL_CODECS = {"mjpeg", "png", "bmp", "gif", "tiff", "webp"}
+
+#: Files that are never footage: sidecars, camera proxies, stills, documents and editing-software caches. They are
+#: left out without being probed (a proxy such as .LRV or .LRF would otherwise be synchronised twice).
 _NOT_MEDIA = {
-    ".xml", ".thm", ".lrv", ".jpg", ".jpeg", ".png", ".txt", ".ini", ".db", ".bin", ".xmp", ".srt",
+    ".xml", ".thm", ".lrv", ".lrf", ".jpg", ".jpeg", ".png", ".txt", ".ini", ".db", ".bin", ".xmp", ".srt",
     ".pdf", ".log", ".cpi", ".bdm", ".mpl", ".ppn", ".dat", ".json", ".mcsync", ".syncora", ".tmp",
-    ".heic", ".dng", ".cr2", ".cr3", ".nef", ".arw", ".gif", ".webp", ".tif", ".tiff", ".psd", ".zip",
+    ".heic", ".heif", ".avif", ".dng", ".gpr", ".cr2", ".cr3", ".nef", ".nrw", ".arw", ".srf", ".sr2", ".orf",
+    ".rw2", ".raf", ".pef", ".srw", ".3fr", ".iiq", ".x3f", ".gif", ".webp", ".tif", ".tiff", ".psd", ".bmp",
+    ".svg", ".ico", ".icns", ".ai", ".eps", ".zip", ".rar", ".7z", ".tar", ".gz", ".dmg", ".pkg", ".iso", ".exe",
+    ".dll", ".sys", ".lnk", ".url", ".webloc", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".rtf",
+    ".md", ".csv", ".html", ".htm", ".vtt", ".ass", ".ssa", ".sub", ".idx", ".smi", ".cue", ".m3u", ".m3u8",
+    ".nfo", ".ctg", ".ind", ".mif", ".scn", ".aae", ".cube", ".3dl", ".lut", ".cdl", ".ccc", ".edl", ".ale",
+    ".aaf", ".omf", ".otio", ".fcpxml", ".prproj", ".drp", ".drt", ".aep", ".pek", ".pkf", ".cfa", ".ims",
+    ".sfk", ".reapeaks", ".asd", ".mhl", ".md5", ".sha1", ".bak", ".part", ".crdownload", ".download",
+    ".ttf", ".otf", ".woff", ".woff2", ".plist", ".ds_store",
 }  # fmt: skip
+#: Camera RAW video that FFmpeg cannot read, and what to do instead.
+RAW_EXTENSIONS = {
+    ".r3d": "RED RAW (.R3D) cannot be read by Syncora: import the camera's proxy files or a transcode",
+    ".braw": "Blackmagic RAW (.BRAW) cannot be read by Syncora: import a transcode or the camera's proxies",
+    ".crm": "Canon Cinema RAW Light (.CRM) cannot be read by Syncora: import the camera's proxy files",
+    ".ari": "ARRIRAW (.ARI) cannot be read by Syncora: import a transcode or the camera's proxies",
+    ".nev": "Nikon N-RAW (.NEV) cannot be read by Syncora: import a transcode",
+}
 VIDEO_EXTENSIONS = {
-    ".mov", ".mp4", ".m4v", ".mxf", ".mts", ".m2ts", ".avi", ".mkv", ".webm", ".mpg", ".mpeg", ".m2t",
-    ".ts", ".3gp", ".insv", ".lrf", ".r3d", ".braw", ".crm", ".dv", ".wmv", ".vob",
+    ".mov", ".qt", ".mp4", ".m4v", ".mxf", ".mts", ".m2ts", ".avi", ".mkv", ".webm", ".mpg", ".mpeg", ".m2v",
+    ".m2t", ".ts", ".3gp", ".3g2", ".insv", ".360", ".dv", ".dif", ".wmv", ".asf", ".vob", ".mod", ".tod",
+    ".flv", ".f4v", ".ogv", *RAW_EXTENSIONS,
 }  # fmt: skip
 AUDIO_EXTENSIONS = {
-    ".wav", ".bwf", ".rf64", ".w64", ".aif", ".aiff", ".flac", ".mp3", ".m4a", ".aac", ".ogg", ".opus",
-    ".wma", ".caf",
+    ".wav", ".bwf", ".rf64", ".w64", ".aif", ".aiff", ".aifc", ".flac", ".mp3", ".mp2", ".m4a", ".m4b", ".aac",
+    ".ac3", ".eac3", ".ogg", ".oga", ".opus", ".wma", ".caf", ".amr", ".mka", ".au", ".wv",
 }  # fmt: skip
 
 

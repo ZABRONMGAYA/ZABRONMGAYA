@@ -17,6 +17,8 @@ extraResources:
     to: engine
   - from: ../engine/dist/ffmpeg
     to: ffmpeg
+  - from: build/icon.png # the window's icon (title bar and taskbar on Windows)
+    to: icon.png
 npmRebuild: false
 publish: null # no auto-update feed
 electronLanguages: [en-US, en-GB, de, fr, es, it, pt-BR, nl, ja, zh-CN]
@@ -41,6 +43,12 @@ mac:
 dmg:
   artifactName: Syncora-${version}-macOS-${arch}.${ext}
   title: Syncora ${version}
+  # Brand Kit 1n: drawn by scripts/render-icons.mjs, with the icons placed on its left cell and dashed target.
+  background: build/background.png
+  iconSize: 128
+  contents:
+    - { x: 155, y: 230, type: file }
+    - { x: 505, y: 230, type: link, path: /Applications }
 
 win:
   target:
@@ -54,3 +62,10 @@ nsis:
   createDesktopShortcut: true
   shortcutName: Syncora
   artifactName: Syncora-Setup-${version}.${ext}
+  uninstallDisplayName: Syncora
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+  installerHeaderIcon: build/icon.ico
+  # Brand Kit 1o: the setup wizard's sidebar (scripts/render-icons.mjs).
+  installerSidebar: build/installerSidebar.bmp
+  uninstallerSidebar: build/installerSidebar.bmp

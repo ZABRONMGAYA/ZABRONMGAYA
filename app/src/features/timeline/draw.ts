@@ -83,10 +83,11 @@ export function clipBox(
   };
 }
 
-function roundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
-  const radius = Math.min(r, w / 2, h / 2);
+/** A rectangle path (square corners, as everywhere in the design system). A clip narrower than its outline gives a
+ * negative size, which some canvas calls reject: sizes never go below zero. */
+function boxPath(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number): void {
   ctx.beginPath();
-  ctx.roundRect(x, y, w, h, radius);
+  ctx.rect(x, y, Math.max(0, w), Math.max(0, h));
 }
 
 function drawWaveform(
@@ -160,7 +161,7 @@ function drawBadge(
   const w = ctx.measureText(text).width + 8;
   if (x + w > maxX) return x;
   ctx.fillStyle = bg;
-  roundedRect(ctx, x, y - 1, w, 14, 3);
+  boxPath(ctx, x, y - 1, w, 14);
   ctx.fill();
   ctx.fillStyle = fg;
   ctx.fillText(text, x + 4, y);
@@ -202,7 +203,7 @@ export function drawTimeline(input: DrawInput): DrawStats {
     const review = clip.status === "needs_review";
 
     ctx.save();
-    roundedRect(ctx, x0, y, w, h, 5);
+    boxPath(ctx, x0, y, w, h);
     ctx.fillStyle = clip.has_video ? palette.video : palette.audio;
     ctx.fill();
     ctx.clip();
@@ -243,7 +244,7 @@ export function drawTimeline(input: DrawInput): DrawStats {
     const lw = isSelected || manual || review ? 2 : 1;
     ctx.lineWidth = lw;
     ctx.strokeStyle = border;
-    roundedRect(ctx, x0 + lw / 2, y + lw / 2, w - lw, h - lw, 5);
+    boxPath(ctx, x0 + lw / 2, y + lw / 2, w - lw, h - lw);
     ctx.stroke();
   }
 

@@ -47,6 +47,10 @@ _CHUNK_BYTES = 1 << 20
 _NORMALISE_BLOCK = 1 << 20
 
 
+#: Audio kept from a file FFmpeg could only partly decode, at least this long.
+_MIN_PARTIAL_S = 1.0
+
+
 class ExtractionError(RuntimeError):
     """FFmpeg could not decode the stream."""
 
@@ -179,7 +183,9 @@ def _decode_filtered(
         raise
     finally:
         drain.join(timeout=5)
-    if proc.returncode != 0:
+    # A recording cut short (a flat battery, a card pulled out) plays up to the damage, and FFmpeg decodes it but
+    # exits with an error at the broken end: what was decoded is kept. Only a file with no usable audio fails.
+    if proc.returncode != 0 and n < params.analysis_rate * _MIN_PARTIAL_S:
         raise ExtractionError(errors[-1] if errors else f"ffmpeg exited with status {proc.returncode}")
     return n, sumsq, builder.finish()
 

@@ -102,7 +102,10 @@ function DuplicatesDialog({ onClose }: { onClose: () => void }) {
       testId="duplicates-dialog"
       footer={
         <>
-          <span className="sy-muted">Nothing is deleted. Ignored copies stay in the project, left out of sync.</span>
+          <span className="sy-muted">
+            Nothing is deleted. Identical copies are left out of sync until kept; possible duplicates stay in until
+            ignored.
+          </span>
           <span className="sy-spacer" />
           <Button
             variant="secondary"
@@ -156,7 +159,13 @@ function DuplicatesDialog({ onClose }: { onClose: () => void }) {
                 </div>
               </div>
               <span className="sy-dups__state">
-                {d.decision === "keep" ? "Kept" : d.decision === "ignore" ? "Ignored" : "Undecided"}
+                {d.decision === "keep"
+                  ? "Kept"
+                  : d.decision === "ignore"
+                    ? "Ignored"
+                    : d.reason === "probable"
+                      ? "Kept for now"
+                      : "Left out"}
               </span>
               <Button
                 variant={d.decision === "keep" ? "tertiary" : "secondary"}

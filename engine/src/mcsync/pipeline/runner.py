@@ -575,8 +575,10 @@ class Pipeline:
                 continue
             if run.discard:
                 continue
-            if isinstance(exc, ProbeError) and "no usable" in str(exc).lower():
-                status, message = "skipped", "not a media file"
+            if isinstance(exc, ProbeError):
+                # Not footage (a stray document, a RAW format FFmpeg cannot read) is left out, not reported as an
+                # error; a media file that cannot be read is an error.
+                status, message = ("skipped" if exc.skip else "failed"), exc.reason
             elif isinstance(exc, OSError) and t.attempts < MAX_ATTEMPTS and not Path(t.detail.get("path", "")).exists():
                 status, message = "failed", "file not found"
             else:

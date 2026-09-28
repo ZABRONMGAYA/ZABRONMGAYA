@@ -60,6 +60,36 @@ def _chunks(values: Sequence, size: int = _CHUNK) -> Iterator[Sequence]:
         yield values[start : start + size]
 
 
+def duplicate_ignored(duplicate_of: int | None, decision: str | None, reason: str | None) -> bool:
+    """Whether a clip that repeats another file is left out of sync and export. Byte-identical copies are, unless the
+    user keeps them. Probable copies (same name, recording time and length, other bytes) are only a suggestion:
+    cameras started together can match all three, so they stay in until the user chooses to ignore them."""
+    if duplicate_of is None:
+        return False
+    if decision is not None:
+        return decision != "keep"
+    return reason != "probable"
+
+
+def same_content(a: str, b: str, samples: int = 32, chunk: int = 32 << 10) -> bool:
+    """Whether two files hold the same bytes, judged from ``samples`` chunks spread over them. A file that cannot be
+    read (offline) is trusted to match its fingerprint."""
+    try:
+        size = os.path.getsize(a)
+        if size != os.path.getsize(b):
+            return False
+        with open(a, "rb") as fa, open(b, "rb") as fb:
+            for k in range(samples):
+                offset = max(0, (size - chunk) * k // max(1, samples - 1))
+                fa.seek(offset)
+                fb.seek(offset)
+                if fa.read(chunk) != fb.read(chunk):
+                    return False
+    except OSError:
+        return True
+    return True
+
+
 @dataclass(frozen=True)
 class ClipRow:
     id: int
@@ -81,6 +111,7 @@ class ClipRow:
     session_id: int | None = None
     duplicate_of: int | None = None
     duplicate_decision: str | None = None
+    duplicate_reason: str | None = None
 
     @property
     def engine_id(self) -> str:
@@ -93,8 +124,8 @@ class ClipRow:
 
     @property
     def ignored_duplicate(self) -> bool:
-        """A copy of another file the user chose to ignore (or has not decided about yet)."""
-        return self.duplicate_of is not None and self.duplicate_decision != "keep"
+        """A copy of another file that is left out of sync and export (see ``duplicate_ignored``)."""
+        return duplicate_ignored(self.duplicate_of, self.duplicate_decision, self.duplicate_reason)
 
     def to_media_item(self) -> MediaItem:
         device = DeviceGuess(
@@ -383,10 +414,12 @@ class Project:
         """Another file already in the project with the same content (identical), or with the same name, length and
         recording time but other bytes (probable: a re-encoded or re-wrapped copy)."""
         row = c.execute(
-            "SELECT id FROM media_file WHERE fingerprint = ? AND path != ? ORDER BY id LIMIT 1",
+            "SELECT id, path FROM media_file WHERE fingerprint = ? AND path != ? ORDER BY id LIMIT 1",
             (it.fingerprint, it.path),
         ).fetchone()
-        if row:
+        # The fingerprint covers a file's size, start and end; files are only called identical when samples from
+        # the middle agree too (two recorder tracks can share a header and silent ends).
+        if row and same_content(it.path, row["path"]):
             return int(row["id"]), "identical"
         if cols["creation_time"] is None or cols["duration_s"] is None:
             return None, None
@@ -410,7 +443,7 @@ class Project:
 
     _CLIP_SQL = """
         SELECT clip.*, media_file.path, media_file.fingerprint, media_file.status, media_file.info_json,
-               media_file.duplicate_of, media_file.duplicate_decision,
+               media_file.duplicate_of, media_file.duplicate_decision, media_file.duplicate_reason,
                device.key AS device_key, device.name AS device_name, device.kind AS device_kind
         FROM clip JOIN media_file ON media_file.id = clip.media_id
         LEFT JOIN device ON device.id = clip.device_id
@@ -438,6 +471,7 @@ class Project:
             session_id=r["session_id"],
             duplicate_of=r["duplicate_of"],
             duplicate_decision=r["duplicate_decision"],
+            duplicate_reason=r["duplicate_reason"],
         )
 
     def clips(self) -> list[ClipRow]:
@@ -1160,7 +1194,7 @@ class Project:
             "media_file.duration_s, media_file.fps, media_file.width, media_file.height, media_file.codec, "
             "media_file.sample_rate, media_file.channels, media_file.timecode, media_file.creation_time, "
             "media_file.size_bytes, media_file.status, media_file.duplicate_of, media_file.duplicate_decision, "
-            "device.name AS device_name, device.kind AS device_kind "
+            "media_file.duplicate_reason, device.name AS device_name, device.kind AS device_kind "
             "FROM clip JOIN media_file ON media_file.id = clip.media_id LEFT JOIN device ON device.id = clip.device_id "
             "ORDER BY clip.id"
         )

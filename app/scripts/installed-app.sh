@@ -17,8 +17,15 @@ case "${1:-}" in
     mnt=$(mktemp -d)
     hdiutil attach -nobrowse -readonly -mountpoint "$mnt" "$dmg"
     [ -L "$mnt/Applications" ] || { echo "the disk image has no Applications shortcut" >&2; exit 1; }
+    ls "$mnt/.background/"*.png >/dev/null 2>&1 || ls "$mnt/.background/"*.tiff >/dev/null 2>&1 ||
+      { echo "the disk image has no background picture" >&2; exit 1; }
     ditto "$mnt/Syncora.app" "$app"
     hdiutil detach "$mnt"
+    # The app's icon: named in Info.plist and present as an .icns file (not Electron's default icon).
+    icon=$(/usr/libexec/PlistBuddy -c "Print CFBundleIconFile" "$app/Contents/Info.plist")
+    icns="$app/Contents/Resources/${icon%.icns}.icns"
+    [ "$(head -c 4 "$icns" 2>/dev/null)" = icns ] || { echo "no app icon at $icns" >&2; exit 1; }
+    cmp -s "$icns" build/icon.icns || { echo "$icns is not the Syncora icon" >&2; exit 1; }
     installed=$(/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" "$app/Contents/Info.plist")
     [ "$installed" = "$version" ] || { echo "installed version $installed, expected $version" >&2; exit 1; }
     for f in "$app/Contents/MacOS/Syncora" "$app/Contents/Resources/engine" "$app/Contents/Resources/ffmpeg"; do

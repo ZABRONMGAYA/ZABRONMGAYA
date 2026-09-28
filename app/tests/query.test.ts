@@ -25,6 +25,7 @@ function row(over: Partial<MediaRow>): MediaRow {
     media_status: "online",
     duplicate_of: null,
     duplicate_decision: null,
+    duplicate_reason: null,
     probe: "done",
     analysis: "done",
     sync_status: "synced",

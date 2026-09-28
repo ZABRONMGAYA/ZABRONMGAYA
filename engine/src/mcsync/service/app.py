@@ -43,7 +43,7 @@ from mcsync.media.tools import FFmpegNotFound, FFmpegTools, find_tools
 from mcsync.media.waveform import PEAK_LEVELS
 from mcsync.pipeline.discovery import volume_of, volume_online, walk
 from mcsync.pipeline.runner import PRIORITY, Pipeline
-from mcsync.project.db import ClipRow, Project, ProjectError
+from mcsync.project.db import ClipRow, Project, ProjectError, duplicate_ignored
 from mcsync.resources import (
     WorkerPlan,
     detect,
@@ -451,7 +451,7 @@ class EngineService:
                 cid, r["name"], r["kind"], r["device_id"], r["device_name"], r["device_kind"], r["session_id"],
                 r["duration_s"], r["fps"], r["width"], r["height"], r["codec"], r["sample_rate"], r["channels"],
                 r["timecode"], r["creation_time"], r["size_bytes"], r["status"], r["duplicate_of"],
-                r["duplicate_decision"], t.get("probe"), a["status"] if a else t.get("analyze"),
+                r["duplicate_decision"], r["duplicate_reason"], t.get("probe"), a["status"] if a else t.get("analyze"),
                 p.status.value if p else None, p.confidence if p else None, p.method.value if p else None,
                 p.start_s if p else None, p.group if p else None, category, r["path"],
             ])  # fmt: skip
@@ -477,6 +477,7 @@ class EngineService:
                 "media_status",
                 "duplicate_of",
                 "duplicate_decision",
+                "duplicate_reason",
                 "probe",
                 "analysis",
                 "sync_status",
@@ -1122,7 +1123,7 @@ def _category(
 ) -> str:
     """Where a clip stands in the mass-sync results (``sync.summary``). ``lone_device``: the clip's sync group holds
     one device's clips only, placed by that device's own clock: not synchronised to anything else."""
-    if excluded or (row["duplicate_of"] is not None and row["duplicate_decision"] != "keep"):
+    if excluded or duplicate_ignored(row["duplicate_of"], row["duplicate_decision"], row["duplicate_reason"]):
         return "skipped"
     if tasks.get("probe") == "failed" or (analysis is not None and analysis["status"] == "failed"):
         return "failed"

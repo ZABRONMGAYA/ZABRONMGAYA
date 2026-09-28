@@ -9,6 +9,22 @@ $ErrorActionPreference = "Stop"
 $version = (Get-Content (Join-Path $PSScriptRoot "..\package.json") | ConvertFrom-Json).version
 $shortcut = Join-Path ([Environment]::GetFolderPath("Desktop")) "Syncora.lnk"
 
+# The Syncora icon (red sync line, light bars), as Windows shows it for a file: not Electron's or NSIS's default.
+function Assert-SyncoraIcon($file) {
+  Add-Type -AssemblyName System.Drawing
+  $bmp = [System.Drawing.Icon]::ExtractAssociatedIcon($file).ToBitmap()
+  $red = 0; $light = 0
+  for ($x = 0; $x -lt $bmp.Width; $x++) {
+    for ($y = 0; $y -lt $bmp.Height; $y++) {
+      $c = $bmp.GetPixel($x, $y)
+      if ($c.A -gt 200 -and $c.R -gt 200 -and $c.G -lt 100 -and $c.B -lt 80) { $red++ }
+      elseif ($c.A -gt 200 -and $c.R -gt 220 -and $c.G -gt 220 -and $c.B -gt 220) { $light++ }
+    }
+  }
+  if ($red -lt 8 -or $light -lt 8) { throw "$file does not show the Syncora icon ($red red, $light light pixels)" }
+  Write-Host "Syncora icon on $file ($($bmp.Width) px: $red red, $light light pixels)"
+}
+
 function Get-Entry {
   Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*" -ErrorAction SilentlyContinue |
     Where-Object { $_.DisplayName -like "Syncora*" }
@@ -37,6 +53,7 @@ if ($Action -eq "install") {
     if (-not (Test-Path $f)) { throw "missing after install: $f" }
   }
   if (-not (Test-Path $shortcut)) { throw "no desktop shortcut at $shortcut" }
+  foreach ($f in @($setup, $exe, (Get-Uninstaller $entry).Path)) { Assert-SyncoraIcon $f }
   Write-Host "Installed $($entry.DisplayName) $($entry.DisplayVersion) in $dir"
   if ($env:GITHUB_ENV) { "MCSYNC_E2E_APP=$exe" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV }
 }

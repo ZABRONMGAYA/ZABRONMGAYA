@@ -89,16 +89,20 @@ def scan_media(
     infos: list[MediaInfo] = []
     prints: list[str] = []
 
-    def work(f: Path) -> tuple[MediaInfo, str] | ScanProblem:
+    def work(f: Path) -> tuple[MediaInfo, str] | ScanProblem | None:
         try:
             return probe(f, tools), fingerprint(f)
-        except (ProbeError, OSError) as exc:
+        except ProbeError as exc:
+            return None if exc.skip else ScanProblem(str(f), exc.reason)  # not footage: left out quietly
+        except OSError as exc:
             return ScanProblem(str(f), str(exc))
 
     with ThreadPoolExecutor(max_workers=workers or min(8, os.cpu_count() or 2)) as pool:
         for k, result in enumerate(pool.map(work, files)):
             if progress is not None:
                 progress((k + 1) / max(len(files), 1), f"Reading {files[k].name}")
+            if result is None:
+                continue
             if isinstance(result, ScanProblem):
                 problems.append(result)
             else:
