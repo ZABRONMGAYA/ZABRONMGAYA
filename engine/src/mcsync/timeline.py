@@ -27,6 +27,7 @@ REVIEW_REASONS = (
     "conflict",  # measurements disagree (audio vs audio, audio vs timecode)
     "device_overlap",  # two clips of one device overlap: wrong device assignment
     "detached",  # synced to each other but not to the reference
+    "ai_proposal",  # placed by AI sync (speech, visual evidence): check before trusting
     "uncertain",  # placed by a match that is not confident
     "metadata_only",  # placed only by camera clock / creation time (±1 s)
     "unsynced",  # not placed at all
@@ -135,6 +136,8 @@ def _review_reason(clip: TimelineClip, overlapping: bool) -> str | None:
     if clip.status == PlacementStatus.UNSYNCED.value and Flag.EXCLUDED.value not in flags:
         return "unsynced"
     if clip.status == PlacementStatus.NEEDS_REVIEW.value:
+        if clip.method == PlacementMethod.AI.value:
+            return "ai_proposal"
         # A clip in another sync group (another session) is only worth a look when the solver asked for one.
         if Flag.DETACHED_GROUP.value in flags:
             return "detached"

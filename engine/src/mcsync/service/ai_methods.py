@@ -10,10 +10,16 @@ import threading
 from collections import defaultdict
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
+
+from mcsync.ai import speakers as voices
+from mcsync.ai import visual
+from mcsync.ai.aisync import Candidate, Evidence, Placed, Segment, agreement, metadata_evidence, rank, speech_candidates
 from mcsync.ai.models import ALL_MODELS, DEFAULT_SPEECH_MODEL, SPEECH_MODELS, ModelStore
-from mcsync.ai.speech import LANGUAGES, Transcriber
+from mcsync.ai.speech import LANGUAGES, Transcriber, chunks
 from mcsync.project.db import ClipRow, ProjectError
 from mcsync.resources import cpu_usable
+from mcsync.sync.types import ClipPlacement, Flag, MatchStatus, PlacementMethod, PlacementStatus, SyncResult
 
 if TYPE_CHECKING:
     from mcsync.media.cache import AnalysisCache
@@ -50,6 +56,14 @@ class AiMethods:
     def _require_project(self) -> Project: ...  # pragma: no cover
     def _pipeline(self) -> Pipeline: ...  # pragma: no cover
     def _settings(self) -> dict: ...  # pragma: no cover
+    def _solve(self, clips: Any = None) -> dict: ...  # pragma: no cover
+    def _clip_inputs(self, rows: list, job: Any = None, *, extract: bool = True, remember: bool = True) -> list: ...
+    def _engine(self) -> Any: ...  # pragma: no cover
+    def _run_matches(self, run_id: int) -> list: ...  # pragma: no cover
+    def tools(self) -> Any: ...  # pragma: no cover
+    def log(self, text: str) -> None: ...  # pragma: no cover
+
+    pipeline: Pipeline | None
 
     def transcriber(self, model: str, language: str) -> Transcriber:
         """The loaded speech models for ``model`` and ``language`` (one set in memory at a time)."""
@@ -257,6 +271,268 @@ class AiMethods:
                      "score": 1.0 if r.name.lower() == lowered else 0.7})  # fmt: skip
         results.sort(key=lambda h: (-h["score"], h["clip_id"], h["t_s"]))
         return {"query": text, "results": results[:limit]}
+
+    # ------------------------------------------------------------------ AI sync
+
+    def ai_sync(self, clip_id: int) -> dict:
+        """Look for a clip's place from its speech, light changes, its audio at close range and the camera clocks
+        (a job; its result is kept with the clip: ``ai.sync_result``)."""
+        project = self._require_project()
+        project.clip(clip_id)
+        return {"job_id": self.jobs.start("ai-sync", lambda job: self._ai_sync(clip_id, job=job)).id}
+
+    def ai_sync_result(self, clip_id: int) -> dict | None:
+        found = self._require_project().ai_analyses("sync").get(clip_id)
+        return {**found["result"], "status": found["status"]} if found and found["result"] else None
+
+    def ai_sync_accept(self, clip_id: int, candidate: int = 0) -> dict:
+        """Place the clip where AI sync proposes (as a correction the user made: it can be undone)."""
+        project = self._require_project()
+        found = project.ai_analyses("sync").get(clip_id)
+        if not found or not found["result"] or not found["result"]["candidates"]:
+            raise ValueError("no AI sync result for this clip")
+        c = found["result"]["candidates"][candidate]
+        project.add_correction("offset", clip_id, other_clip_id=c["anchor_clip_id"], offset_s=c["offset_s"])
+        project.set_ai_status(clip_id, "sync", "accepted")
+        return self._solve()
+
+    def ai_sync_reject(self, clip_id: int) -> dict:
+        """Discard AI sync's proposal for the clip (it is left for manual sync)."""
+        self._require_project().set_ai_status(clip_id, "sync", "rejected")
+        return self._solve()
+
+    def _ai_sync(self, clip_id: int, *, job: Job | None = None, source: str = "user") -> dict:
+        project = self._require_project()
+        rows = {r.id: r for r in project.clips()}
+        row = rows[clip_id]
+        placements = project.placements()
+        cancel = job.cancel if job is not None else None
+
+        def report(fraction: float, message: str) -> None:
+            if job is not None:
+                job.report(fraction, message)
+
+        # 1. What the clip says (transcribed now if needed).
+        segments = project.transcript(clip_id)
+        settings = self._settings()
+        if not segments and row.audio_stream is not None and self.models.path(settings["transcription_model"]):
+            report(0.02, f"Transcribing {row.name}")
+            segments = self._transcribe_now(row, cancel, lambda f: report(0.02 + 0.4 * f, f"Transcribing {row.name}"))
+        target = [Segment(s["start_s"], s["end_s"], s["text"]) for s in segments]
+
+        # 2. Speech heard in both.
+        report(0.45, "Matching sentences with the other recordings")
+        placed = []
+        transcribed = set(project.transcript_states())
+        for cid, p in placements.items():
+            if cid == clip_id or cid not in rows or p.start_s is None or p.group is None:
+                continue
+            own = project.transcript(cid) if cid in transcribed else []
+            placed.append(Placed(cid, p.group, p.start_s, rows[cid].info.duration_s,
+                                 [Segment(s["start_s"], s["end_s"], s["text"]) for s in own]))  # fmt: skip
+        candidates = rank(speech_candidates(target, placed))[:3]
+
+        # 3. Light changes seen by both cameras: around each candidate, or on their own when nothing was said.
+        by_id = {p.clip_id: p for p in placed}
+        if row.info.video:
+            report(0.5, f"Reading the light changes in {row.name}")
+            target_lum = self._brightness(row, cancel, lambda f: report(0.5 + 0.2 * f, f"Reading {row.name}"))
+            if candidates:
+                for c in candidates:
+                    anchor = rows[c.anchor_clip_id]
+                    if anchor.info.video:
+                        lum = self._brightness(anchor, cancel)
+                        found = visual.correlate(target_lum, lum, (c.offset_s - 3.0, c.offset_s + 3.0))
+                        if found is not None and found.score >= 0.2:
+                            c.evidence.append(_visual_evidence(found))
+            else:
+                for other in self._clock_neighbours(row, rows, by_id)[:3]:
+                    lum = self._brightness(rows[other.clip_id], cancel)
+                    span = (-row.info.duration_s + 3.0, other.duration_s - 3.0)
+                    found = visual.correlate(target_lum, lum, span)
+                    if found is not None and found.score >= 0.3 and found.ratio >= 1.5:
+                        start = other.start_s + found.lag_s
+                        candidates.append(
+                            Candidate(other.clip_id, other.group, found.lag_s, start, [_visual_evidence(found)])
+                        )
+
+        # 4. The audio compared again, only around each candidate: speech fingerprints missed often still
+        # correlates within ±2 s. It also makes the offset exact.
+        report(0.75, "Comparing the audio at each candidate")
+        for c in candidates:
+            anchor = rows[c.anchor_clip_id]
+            if row.audio_stream is None or anchor.audio_stream is None:
+                continue
+            try:
+                ref, tgt = self._clip_inputs([anchor, row], remember=False)
+                m = self._engine().match_pair(ref, tgt, window=(c.offset_s - 2.0, c.offset_s + 2.0))
+            except Exception:  # noqa: BLE001 - audio not readable: the other evidence stands
+                continue
+            est = m.estimate
+            if m.offset_s is not None and est.status == MatchStatus.CONFIDENT:
+                c.offset_s = m.offset_s
+                if anchor.id in by_id:
+                    c.start_s = by_id[anchor.id].start_s + m.offset_s
+                times = [(w.time_s, max(0.0, w.correlation)) for w in est.windows if w.inlier]
+                note = f"audio agrees within ±2 s (correlation {est.correlation:.2f})"
+                c.evidence.append(Evidence("audio", est.confidence, note, times))
+            elif est.correlation > 0:
+                c.evidence.append(Evidence("audio", 0.0, f"audio does not confirm (correlation {est.correlation:.2f})"))
+
+        # 5. The camera clocks, as a sanity check.
+        for c in candidates:
+            clock = _clock_offset(row, rows[c.anchor_clip_id])
+            e = metadata_evidence(c, clock)
+            if e is not None:
+                c.evidence.append(e)
+
+        ranked = rank(candidates)[:5]
+        result = {
+            "clip_id": clip_id,
+            "source": source,
+            "duration_s": row.info.duration_s,
+            "reason": self._ai_reason(row, placements),
+            "searched": {
+                "speech_s": sum(s.end_s - s.start_s for s in target),
+                "sentences": len(target),
+                "against": len(placed),
+            },  # fmt: skip
+            "candidates": [c.to_dict(row.info.duration_s) for c in ranked],
+            "agreement": agreement(ranked),
+        }
+        project.set_ai_analysis(clip_id, "sync", result, ranked[0].confidence if ranked else None,
+                                "proposed" if ranked else "failed")  # fmt: skip
+        report(1.0, "Done")
+        return result
+
+    def _brightness(self, row: ClipRow, cancel: Any = None, progress: Any = None) -> np.ndarray:
+        return visual.brightness(self.tools(), row.path, self.cache.base, row.fingerprint, cancel=cancel,
+                                 progress=progress, duration_s=row.info.duration_s)  # fmt: skip
+
+    def _clock_neighbours(self, row: ClipRow, rows: dict[int, ClipRow], placed: dict[int, Placed]) -> list[Placed]:
+        """Video clips on a timeline, closest by camera clock first (when there is nothing said to match)."""
+        out = []
+        for cid, p in placed.items():
+            other = rows[cid]
+            if not other.info.video:
+                continue
+            clock = _clock_offset(row, other)
+            out.append((abs(clock) if clock is not None else 1e9, p))
+        return [p for _, p in sorted(out, key=lambda x: x[0])]
+
+    def _ai_reason(self, row: ClipRow, placements: dict) -> str:
+        """Why audio could not place the clip, in plain words, with the measured value."""
+        p = placements.get(row.id)
+        if row.audio_stream is None:
+            return f"{row.name} has no sound to compare with the other recordings."
+        project = self._require_project()
+        run = project.last_completed_run()
+        best = None
+        if run is not None:
+            me = str(row.id)
+            for m in self._run_matches(run):
+                if me in (m.ref_id, m.tgt_id) and m.estimate.correlation is not None:
+                    best = max(best or 0.0, float(m.estimate.correlation))
+        placed = p is not None and p.start_s is not None
+        if placed and p.status == PlacementStatus.NEEDS_REVIEW:
+            return f"{row.name} was placed with low confidence ({p.confidence:.0%})."
+        if best is not None:
+            return (f"{row.name} audio correlates at {best:.2f} at best with the other recordings "
+                    "(a confident match needs clearly more).")  # fmt: skip
+        return f"No other recording was found to overlap {row.name} by sound or clock."
+
+    def _transcribe_now(self, row: ClipRow, cancel: Any, progress: Any) -> list[dict]:
+        """Transcribe one clip right away (AI sync needs it), keeping the result like a background transcription."""
+        project = self._require_project()
+        settings = self._settings()
+        model, language = settings["transcription_model"], settings["transcription_language"]
+        stream = row.audio_stream_info
+        assert stream is not None
+        spans = chunks(row.info.duration_s)
+        project.set_transcript_state(row.id, model, language, len(spans))
+        known = [voices.Speaker(r["key"], np.frombuffer(r["centroid"], dtype=np.float32).copy(), int(r["utterances"]))
+                 for r in project.speakers()]  # fmt: skip
+        transcriber = self.transcriber(model, language)
+        for k, (a, b) in enumerate(spans):
+            utterances, events = transcriber.transcribe_range(
+                self.tools(), row.path, stream.index, row.audio_channel, stream.channels, a, b, cancel,
+                lambda f, k=k: progress((k + f) / len(spans)),
+            )  # fmt: skip
+            keys = voices.assign([u.fingerprint for u in utterances], known)
+            rows = [(u.start_s, u.end_s, key, u.language, u.text,
+                     u.fingerprint.astype(np.float32).tobytes() if u.fingerprint is not None else None)
+                    for u, key in zip(utterances, keys, strict=True)]  # fmt: skip
+            project.replace_transcript_chunk(row.id, k, (a, b), rows, [(e.t_s, e.label) for e in events])
+        project.save_speakers([(s.key, s.centroid.astype(np.float32).tobytes(), s.count) for s in known])
+        if self.pipeline is not None:
+            self.pipeline.forget_speakers()
+        return project.transcript(row.id)
+
+    def ai_fallback(self) -> dict:
+        """AI sync for every clip audio could not place (the automatic fallback, after a sync), as a job."""
+        project = self._require_project()
+
+        def work(job: Job) -> dict:
+            placements = project.placements()
+            todo = [r for r in project.clips() if not r.ignored_duplicate and r.status == "online"
+                    and (placements.get(r.id) is None or placements[r.id].start_s is None)]  # fmt: skip
+            done = {cid for cid, a in project.ai_analyses("sync").items() if a["status"] in ("accepted", "rejected")}
+            todo = [r for r in todo if r.id not in done]
+            found = 0
+            for k, r in enumerate(todo):
+                if job.cancel.is_set():
+                    break
+                job.report(k / max(1, len(todo)), f"AI sync: {r.name} ({k + 1} of {len(todo)})")
+                try:
+                    result = self._ai_sync(r.id, source="auto")
+                except Exception as exc:  # noqa: BLE001 - one clip's problem does not stop the others
+                    self.log(f"AI sync of {r.name} failed: {exc}")
+                    continue
+                found += bool(result["candidates"])
+            timeline = self._solve()
+            self.notify("ai.fallback_done", {"clips": len(todo), "placed": found})
+            return {"clips": len(todo), "placed": found, "timeline": timeline}
+
+        return {"job_id": self.jobs.start("ai-fallback", work).id}
+
+    def after_sync_run(self) -> None:
+        """Called when a sync run completes: the automatic AI fallback, when switched on."""
+        if self.project is not None and self._settings().get("ai_fallback"):
+            self.ai_fallback()
+
+    def with_ai_proposals(self, result: SyncResult) -> SyncResult:
+        """The automatic fallback's proposals, as placements for review, for clips audio could not place."""
+        if not self._settings().get("ai_fallback"):
+            return result
+        proposals = self._require_project().ai_analyses("sync")
+        placements = dict(result.placements)
+        for clip_id, a in proposals.items():
+            res = a["result"]
+            if a["status"] != "proposed" or not res or res.get("source") != "auto" or not res["candidates"]:
+                continue
+            best = res["candidates"][0]
+            key, anchor = str(clip_id), placements.get(str(best["anchor_clip_id"]))
+            current = placements.get(key)
+            if best["confidence"] < 0.5 or anchor is None or anchor.start_s is None or (
+                    current is not None and current.start_s is not None):  # fmt: skip
+                continue
+            placements[key] = ClipPlacement(key, anchor.start_s + best["offset_s"], anchor.group, PlacementMethod.AI,
+                                            float(best["confidence"]), PlacementStatus.NEEDS_REVIEW,
+                                            (Flag.AI_PROPOSAL,))  # fmt: skip
+        return SyncResult(result.reference_id, placements, result.matches, result.edges, result.warnings)
+
+
+def _visual_evidence(found: visual.VisualMatch) -> Evidence:
+    events = len(found.shared_events)
+    note = (f"{events} light change{'s' if events != 1 else ''} seen by both cameras" if events
+            else f"brightness changes correlate at {found.score:.2f}")  # fmt: skip
+    strength = min(1.0, found.score * (1.0 if found.ratio >= 1.5 else 0.6))
+    return Evidence("visual", strength, note, [(t, strength) for t in found.shared_events])
+
+
+def _clock_offset(row: ClipRow, anchor: ClipRow) -> float | None:
+    a, b = row.info.creation_time, anchor.info.creation_time
+    return (a - b).total_seconds() if a is not None and b is not None else None
 
 
 def smart_targets(rows: list[ClipRow], placements: dict, analysis: dict) -> list[int]:

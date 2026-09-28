@@ -994,6 +994,7 @@ class Pipeline:
         self._set_sync({**s, "phase": "done", "finished": time.time(), "elapsed_s": elapsed})
         self._log("Sync", f"run {run_id} complete in {elapsed:.0f} s")
         self._emit("sync_finished", {"run_id": run_id, "status": "completed", "timeline": timeline})
+        self.service.after_sync_run()  # the AI fallback for clips audio could not place, when switched on
 
     def _update_sessions(self) -> None:
         placements = self.project.placements()

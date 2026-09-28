@@ -188,7 +188,7 @@ class Transcriber:
                     if event is not None:
                         events.append(SoundEvent(t, event))
                         continue
-                    if text.lower() in _NOISE or _CAPTION.match(text):
+                    if text.lower() in _NOISE or _CAPTION.match(text) or repetitive(text):
                         continue
                     utterances.append(Utterance(t, t + len(x) / SAMPLE_RATE, text, lang, self._fingerprint(x)))
                 if progress is not None:
@@ -219,6 +219,12 @@ def caption_event(text: str) -> str | None:
         return None
     what = m.group("what").lower()
     return next((label for key, label in _EVENTS if key in what), None)
+
+
+def repetitive(text: str) -> bool:
+    """Whisper's hallucination on noise: one or two words over and over ("of of of of of")."""
+    words = re.findall(r"\w+", text.lower())
+    return len(words) >= 4 and len(set(words)) <= max(1, len(words) // 4)
 
 
 def decode_command(

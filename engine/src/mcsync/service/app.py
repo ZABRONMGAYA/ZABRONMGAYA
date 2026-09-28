@@ -148,6 +148,7 @@ class EngineService(AiMethods):
             "speakers.list", "speakers.rename", "speakers.merge",
             "markers.list", "markers.add", "markers.update", "markers.delete",
             "search.query",
+            "ai.sync", "ai.sync_result", "ai.sync_accept", "ai.sync_reject", "ai.fallback",
         ):  # fmt: skip
             server.register(name, getattr(self, name.replace(".", "_")))
 
@@ -873,6 +874,7 @@ class EngineService(AiMethods):
                 excluded_clips=set(corrections.excluded_clips) | ignored,
             )
         result = self._engine().solve(clips, matches, corrections, report_edges=False)
+        result = self.with_ai_proposals(result)
         project.save_placements(result)
         placements = {int(cid): p for cid, p in result.placements.items()}
         return to_jsonable(build_timeline(rows, placements, int(result.reference_id)))

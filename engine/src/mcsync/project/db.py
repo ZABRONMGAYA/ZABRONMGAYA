@@ -1280,6 +1280,30 @@ class Project:
             if centroid is not None:
                 c.execute("UPDATE speaker SET centroid = ?, utterances = ? WHERE key = ?", (centroid, utterances, into))
 
+    def set_ai_analysis(self, clip_id: int, analysis_type: str, result: dict, confidence: float | None,
+                        status: str) -> None:  # fmt: skip
+        """The latest result of one kind of AI analysis of a clip (replaces the previous one)."""
+        with self._tx() as c:
+            c.execute("DELETE FROM ai_analysis WHERE clip_id = ? AND analysis_type = ?", (clip_id, analysis_type))
+            c.execute(
+                "INSERT INTO ai_analysis (clip_id, analysis_type, result_json, confidence, status, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (clip_id, analysis_type, json.dumps(result), confidence, status, _now()),
+            )
+
+    def ai_analyses(self, analysis_type: str) -> dict[int, dict]:
+        rows = self._query("SELECT * FROM ai_analysis WHERE analysis_type = ?", (analysis_type,))
+        return {
+            int(r["clip_id"]): {"result": json.loads(r["result_json"]) if r["result_json"] else None,
+                                "confidence": r["confidence"], "status": r["status"], "created_at": r["created_at"]}
+            for r in rows
+        }  # fmt: skip
+
+    def set_ai_status(self, clip_id: int, analysis_type: str, status: str) -> None:
+        with self._tx() as c:
+            c.execute("UPDATE ai_analysis SET status = ? WHERE clip_id = ? AND analysis_type = ?",
+                      (status, clip_id, analysis_type))  # fmt: skip
+
     def add_markers(self, rows: Sequence[tuple[int, float, str, str | None, float | None]]) -> None:
         """``(clip_id, t_s, type, label, confidence)``."""
         with self._tx() as c:

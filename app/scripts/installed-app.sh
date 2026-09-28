@@ -17,8 +17,11 @@ case "${1:-}" in
     mnt=$(mktemp -d)
     hdiutil attach -nobrowse -readonly -mountpoint "$mnt" "$dmg"
     [ -L "$mnt/Applications" ] || { echo "the disk image has no Applications shortcut" >&2; exit 1; }
-    ls "$mnt/.background/"*.png >/dev/null 2>&1 || ls "$mnt/.background/"*.tiff >/dev/null 2>&1 ||
-      { echo "the disk image has no background picture" >&2; exit 1; }
+    # electron-builder stores the window background as a hidden picture (".background/…" or ".background.tiff").
+    background=$(find "$mnt" -maxdepth 2 -iname '*background*' \( -iname '*.tiff' -o -iname '*.tif' -o -iname '*.png' \) \
+      -not -path "$mnt/Syncora.app/*" | head -1)
+    [ -n "$background" ] || { echo "the disk image has no background picture:" >&2; ls -la "$mnt" >&2; exit 1; }
+    echo "Disk image background: ${background#"$mnt"/}"
     ditto "$mnt/Syncora.app" "$app"
     hdiutil detach "$mnt"
     # The app's icon: named in Info.plist and present as an .icns file (not Electron's default icon).

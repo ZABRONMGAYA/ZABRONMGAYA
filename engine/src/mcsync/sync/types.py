@@ -62,6 +62,8 @@ class Flag(StrEnum):
     MANUAL = "manual"
     MANUAL_CONFLICT = "manual_conflict"
     EXCLUDED = "excluded"
+    #: Placed by AI sync (speech and visual evidence) where audio could not place the clip: always reviewed.
+    AI_PROPOSAL = "ai_proposal"
     NO_AUDIO = "no_audio"
 
 
@@ -86,6 +88,7 @@ class PlacementMethod(StrEnum):
     METADATA = "metadata"
     CHAPTER = "chapter"
     MANUAL = "manual"
+    AI = "ai"
     NONE = "none"
 
 

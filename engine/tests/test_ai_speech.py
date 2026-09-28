@@ -10,7 +10,7 @@ import pytest
 
 from mcsync.ai import speakers as voices
 from mcsync.ai.models import ModelStore, bundled_dir
-from mcsync.ai.speech import CHUNK_S, caption_event, chunks
+from mcsync.ai.speech import CHUNK_S, caption_event, chunks, repetitive
 from mcsync.project import Project
 from mcsync.service.ai_methods import smart_targets
 from mcsync.service.app import EngineService
@@ -47,6 +47,8 @@ def test_captions_become_sound_events_not_text():
     assert caption_event("♪ ♪") == "Music"
     assert caption_event("(laughs)") == "Laughter"
     assert caption_event("Thank you all for coming.") is None
+    assert repetitive("of of of of of of of of of") and repetitive("the the the the the the the the")
+    assert not repetitive("Thank you all for coming.") and not repetitive("no no no")
 
 
 def unit(v):
