@@ -2,6 +2,8 @@
 // which cameras are hidden, pinned or solo. Playback position lives in the master clock (features/multicam/clock).
 import { create } from "zustand";
 
+import type { SyncPoints } from "../api/contract";
+
 export type Layout = "grid" | "program" | "compare";
 /** Auto: the original where Chromium decodes it and there are few cameras, lighter pictures otherwise;
  * Performance: 360p pictures for every camera but the program; Quality: originals; Custom: one resolution. */
@@ -46,6 +48,8 @@ export interface TileStats {
 
 export interface PlaybackState extends Omit<Saved, "layout"> {
   layout: Layout;
+  /** The camera with the red focus (click, number keys): its clip is the one the inspector shows. */
+  active: string | null;
   program: string | null;
   /** The camera whose sound is heard ("mute": none; null: automatic, the reference recorder). */
   monitor: string | null;
@@ -56,8 +60,15 @@ export interface PlaybackState extends Omit<Saved, "layout"> {
   /** Review: the reference camera on the left, the clip under review on the right. */
   compare: { reference: string; candidate: string } | null;
   stats: Record<string, TileStats>;
+  /** Review workflow: the clips to review, in timeline order, and the one on screen. */
+  review: { ids: number[]; index: number } | null;
+  /** Sync points of the selected clip. */
+  points: (SyncPoints & { clipId: number }) | null;
 
   setLayout(layout: Layout): void;
+  setActive(key: string | null): void;
+  setReview(review: PlaybackState["review"]): void;
+  setPoints(points: PlaybackState["points"]): void;
   setProgram(key: string | null): void;
   setMonitor(key: string | null): void;
   setQuality(quality: Quality, customHeight?: number): void;
@@ -80,6 +91,9 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
   page: 0,
   compare: null,
   stats: {},
+  active: null,
+  review: null,
+  points: null,
 
   setLayout(layout) {
     set({ layout });
@@ -87,6 +101,15 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
   },
   setProgram(program) {
     set({ program });
+  },
+  setActive(active) {
+    set({ active });
+  },
+  setReview(review) {
+    set({ review });
+  },
+  setPoints(points) {
+    set({ points });
   },
   setMonitor(monitor) {
     set({ monitor });

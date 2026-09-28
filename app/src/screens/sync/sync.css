@@ -267,7 +267,7 @@
 }
 .sy-categories {
   display: grid;
-  grid-template-columns: repeat(6, 1fr);
+  grid-template-columns: repeat(7, 1fr);
   margin: 24px 64px 0;
   border: 1px solid var(--sy-border);
 }
@@ -296,6 +296,7 @@
   font-size: 12px;
   color: var(--sy-text-2);
 }
+.sy-category--confirmed .sy-category__n,
 .sy-category--high_confidence .sy-category__n {
   color: var(--sy-status-success);
 }

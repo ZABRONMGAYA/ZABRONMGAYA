@@ -411,6 +411,12 @@ def solve_placements(
                 or any(f in flags for f in (Flag.TIMECODE_DISAGREES, Flag.CONFLICTING_MATCHES))
             )
         anchor = anchor_of[comp]
+        corroboration = len({
+            clips[e.j if e.i == k else e.i].device_id or node_names[e.j if e.i == k else e.i]
+            for e in active_audio
+            if e.confidence >= params.confident_threshold
+            and clips[e.j if e.i == k else e.i].device_id != clip.device_id
+        })  # fmt: skip
         placements[cid] = ClipPlacement(
             clip_id=cid,
             start_s=display_start(k) - display_start(anchor),
@@ -420,6 +426,7 @@ def solve_placements(
             status=PlacementStatus.NEEDS_REVIEW if review else PlacementStatus.SYNCED,
             flags=tuple(dict.fromkeys(flags)),
             drift_ppm=_ppm(rates[anchor] - rates[k]),
+            corroboration=corroboration,
         )
 
     # --- edge reports ------------------------------------------------------------

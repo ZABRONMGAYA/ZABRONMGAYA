@@ -1,5 +1,66 @@
 # Changelog
 
+## 1.3.0
+
+A real multicamera preview in the Sync workspace, a synchronisation engine that places noisy gimbal and phone
+footage instead of leaving it for review, and no more "max_workers must be <= 61" on large Windows machines.
+Projects from 1.2 open and are upgraded.
+
+### Fixed
+
+- **Windows: "ValueError: max_workers must be <= 61".** On computers with more than 61 usable processor threads the
+  matcher asked Windows for more worker processes than it allows, and synchronisation failed. Worker counts now
+  come from the processor, memory and platform (never more than 61 processes on Windows, whatever is set in
+  Settings → Performance), and one failed file never stops the queue.
+- **Too many clips left for review on noisy cameras** (for example a gimbal camera whose microphone hears mostly its
+  motors and wind). The engine itself was improved, the thresholds were not lowered:
+  - a noise-robust band envelope finds candidates in footage where the room is quieter than the motors;
+  - the fine stage measures how far the correlation peak stands out, which tells the same sound from rhythmic
+    look-alikes, so faint but genuine matches are no longer capped;
+  - a new clock-anchoring step calibrates each camera's clock from its confidently matched clips and searches the
+    rest narrowly where the clock puts them (temporal continuity);
+  - a camera clock calibrated by confident matches now outweighs a single uncertain match that contradicts it,
+    so clips without usable sound land near their true place (for review) instead of minutes away.
+
+  Measured on the multicamera benchmark (known offsets, `python -m mcsync.testing.multicam`): gimbal clips
+  auto-synced 54 → 60 of 60 (standard) and 0 → 43 of 60 (hard: 12 of the 17 left have no usable sound), with no
+  false match in either. See docs/SYNC_ENGINE.md §9.1.
+
+### Added
+
+- **Multicamera viewer** in the Sync workspace (S06; Sync → Workspace, and the Timeline stage):
+  - every camera plays its real media at the master clock's time with its offset and drift applied — natively where
+    the computer decodes it (hardware decoding), through FFmpeg otherwise (ProRes, DNxHR, 10-bit, MXF…);
+  - one master clock drives the cameras, the audio monitor, the timeline playhead and the timecode;
+  - each camera window shows its camera, clip, source timecode, sync status, confidence and offset, and says
+    NO MEDIA, OFFLINE, OUTSIDE CLIP, NOT YET SYNCED or REVIEW REQUIRED instead of holding a last frame;
+  - grid, program (one camera large) and compare layouts; any number of cameras (16 per page; only the cameras on
+    screen load media); select, solo, hide, pin; 1–9 pick a camera, Enter shows it large, F full screen;
+  - one source heard at a time (the reference recorder by default), chosen per camera or muted (M);
+  - scrubbing on the ruler, frame steps (← →), J K L, previous / next sync point;
+  - preview quality Auto, Performance, Quality or a fixed 360 / 540 / 720 / 1080 / original, with the pictures per
+    second and GPU or CPU decoding shown.
+- **Sync inspector** (S06): offset from the reference in time and frames, method, confidence, evidence (windows
+  that agree, peak prominence, how many other sources agree), drift, what the preview shows, master and source
+  time; nudges of ±1 ms, ±1 frame, ±10 frames (⌥ , .  —  , .  —  ⇧ , .); Set sync point (S), Lock sync (⌘L), Reset
+  (⌘⌫), Re-run AI (⇧A), Snap to audio, Place at playhead, Exclude, Use as reference; "Show evidence" lists the
+  audio matches or opens the AI evidence.
+- **Sync points:** pin moments of a clip to the timeline; two or more measure its drift and show whether they agree.
+- **Review workflow** ("Review N clips"): each clip beside the camera that overlaps it best, with Play both, Accept,
+  Adjust, Re-sync, Exclude, Previous and Next.
+- **Statuses:** Confirmed (placed or accepted by you, or two other sources agree), High confidence, Synchronized,
+  Review recommended, Manual sync required, Failed, Skipped. The project file keeps each clip's synchronisation in a
+  `sync_result` view (camera, session, group, reference, offset, drift, method, confidence, evidence, status, manual
+  adjustment, sync points, analysis version, time).
+- **Acceptance test** of the preview (four cameras including a ProRes one and a noisy gimbal, two recorders, known
+  offsets, a clip without sound): every camera window is read back and checked to show the same scene frame.
+
+### Changed
+
+- ← and → now move the playhead a frame (as in the design); , and . nudge the selected clip.
+- FFmpeg in the installers adds the MJPEG encoder and hardware decoders (VideoToolbox on macOS, D3D11VA/DXVA2 on
+  Windows) for the preview.
+
 ## 1.2.0
 
 Transcripts, speakers, search and AI sync, all on your computer; every screen and setting is active. Projects from

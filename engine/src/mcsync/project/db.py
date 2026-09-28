@@ -1103,9 +1103,10 @@ class Project:
 
     # ------------------------------------------------------------- placements
 
-    def save_placements(self, result: SyncResult) -> None:
+    def save_placements(self, result: SyncResult, analysis_version: str | None = None) -> None:
         """Store the latest solve. Only placements that changed are written: a correction usually moves one group."""
         now = _now()
+        version = analysis_version or __version__
         new = {int(cid): p for cid, p in result.placements.items()}
         with self._tx() as c:
             old = self._saved_placements
@@ -1117,8 +1118,9 @@ class Project:
                 c.executemany("DELETE FROM placement WHERE clip_id = ?", [(cid,) for cid in gone])
                 changed = [(cid, p) for cid, p in new.items() if old.get(cid) != p]
             c.executemany(
-                "INSERT OR REPLACE INTO placement (clip_id, placement_json, solved_at) VALUES (?, ?, ?)",
-                [(cid, json.dumps(to_jsonable(p)), now) for cid, p in changed],
+                "INSERT OR REPLACE INTO placement (clip_id, placement_json, solved_at, analysis_version) "
+                "VALUES (?, ?, ?, ?)",
+                [(cid, json.dumps(to_jsonable(p)), now, version) for cid, p in changed],
             )
             self._saved_placements = new
 
@@ -1130,6 +1132,36 @@ class Project:
                     for r in self._query("SELECT * FROM placement")
                 }
             return dict(self._saved_placements)
+
+    # ------------------------------------------------------------ sync points
+
+    def sync_points(self, clip_id: int) -> list[dict]:
+        rows = self._query("SELECT id, clip_id, source_s, group_s, note, created_at FROM sync_point "
+                           "WHERE clip_id = ? ORDER BY source_s", (clip_id,))  # fmt: skip
+        return [dict(r) for r in rows]
+
+    def add_sync_point(self, clip_id: int, source_s: float, group_s: float, note: str | None = None) -> int:
+        with self._tx() as c:
+            if c.execute("SELECT 1 FROM clip WHERE id = ?", (clip_id,)).fetchone() is None:
+                raise ProjectError(f"unknown clip {clip_id}")
+            cur = c.execute(
+                "INSERT INTO sync_point (clip_id, source_s, group_s, note, created_at) VALUES (?, ?, ?, ?, ?)",
+                (clip_id, source_s, group_s, note, _now()),
+            )
+            return int(cur.lastrowid)  # type: ignore[arg-type]
+
+    def remove_sync_point(self, point_id: int) -> int | None:
+        """Delete a sync point; returns its clip (None: no such point)."""
+        with self._tx() as c:
+            row = c.execute("SELECT clip_id FROM sync_point WHERE id = ?", (point_id,)).fetchone()
+            if row is None:
+                return None
+            c.execute("DELETE FROM sync_point WHERE id = ?", (point_id,))
+            return int(row["clip_id"])
+
+    def sync_results(self) -> list[dict]:
+        """Every placed clip's synchronisation, one row each (the ``sync_result`` view)."""
+        return [dict(r) for r in self._query("SELECT * FROM sync_result ORDER BY clip_id")]
 
     # ---------------------------------------------------------------- exports
 

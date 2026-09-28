@@ -386,3 +386,38 @@ def test_clock_starts_unwraps_time_of_day_only():
     ]
     starts = clock_starts(epoch)
     assert starts[("b", epoch[1].clock)] - starts[("a", epoch[0].clock)] == pytest.approx(5e4)
+
+
+def test_calibrated_device_clock_outweighs_an_uncertain_contradicting_match():
+    """A camera's clock, calibrated by three confident matches, places a clip whose only audio match is uncertain
+    and 20 minutes away: the match is rejected (clock mismatch) and the clip is placed by its clock, for review."""
+
+    def ct(t):
+        return ClockReading(36000.0 + t + 192.0, domain="camA", source=ClockSource.CREATION_TIME)
+
+    clips = [clip("R", 3600.0, device="rec")] + [
+        clip(f"A{k}", 30.0, clock=ct(t), device="camA") for k, t in enumerate((40.0, 400.0, 900.0, 1500.0))
+    ]
+    matches = [match("R", "A0", 40.3), match("R", "A1", 400.3), match("R", "A2", 900.3),
+               match("R", "A3", 1500.3 + 1200.0, confidence=0.4)]  # fmt: skip
+    result = solve_placements(clips, matches, reference_id="R")
+    a3 = result.placements["A3"]
+    assert a3.method == PlacementMethod.METADATA
+    assert a3.start_s == pytest.approx(1500.3, abs=0.01)
+    assert a3.status == PlacementStatus.NEEDS_REVIEW
+    assert Flag.CLOCK_MISMATCH in a3.flags
+    # A confident match is never overruled by a clock.
+    matches[-1] = match("R", "A3", 1500.3 + 1200.0, confidence=0.95)
+    result = solve_placements(clips, matches, reference_id="R")
+    assert result.placements["A3"].method == PlacementMethod.AUDIO
+    assert result.placements["A3"].start_s == pytest.approx(2700.3, abs=0.01)
+
+
+def test_corroboration_counts_other_devices_holding_a_clip():
+    clips = [clip("R", 600.0, device="rec"), clip("L", 600.0, device="lav"), clip("A", 60.0, device="cam"),
+             clip("B", 60.0, device="cam")]  # fmt: skip
+    matches = [match("R", "L", 1.0), match("R", "A", 40.0), match("L", "A", 39.0), match("R", "B", 200.0),
+               match("A", "B", 160.0)]  # fmt: skip
+    result = solve_placements(clips, matches, reference_id="R")
+    assert result.placements["A"].corroboration == 2  # the recorder and the lavalier agree
+    assert result.placements["B"].corroboration == 1  # the recorder only (A is the same camera)

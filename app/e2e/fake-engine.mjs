@@ -188,6 +188,7 @@ const session = {
 const noCounts = () => ({ pending: 0, running: 0, done: 0, failed: 0, skipped: 0, cancelled: 0, rate_per_min: null });
 const categories = (review) => ({
   synchronized: clips.length - review,
+  confirmed: 0,
   high_confidence: clips.length - review,
   review,
   manual: 0,

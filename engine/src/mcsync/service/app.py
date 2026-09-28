@@ -32,6 +32,8 @@ from concurrent.futures import Executor, ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from mcsync import __version__
 from mcsync.ai.models import DEFAULT_SPEECH_MODEL, SPEECH_MODELS
 from mcsync.ai.speech import LANGUAGES
@@ -75,6 +77,8 @@ PROTOCOL_VERSION = 2
 MATCH_KEY_VERSION = "4"
 #: Keys of fingerprint-candidate and extended-search matches: independent of the exact window (5: as above).
 STAGED_KEY_VERSION = "5"
+#: Recorded with every saved placement (``sync_result.analysis_version``): the engine and matcher that produced it.
+ANALYSIS_VERSION = f"{__version__}+m{MATCH_KEY_VERSION}.s{STAGED_KEY_VERSION}"
 SETTINGS_DEFAULTS: dict[str, Any] = {
     "mode": SyncMode.HYBRID.value,
     "reference_clip_id": None,
@@ -142,6 +146,7 @@ class EngineService(AiMethods):
             "pipeline.status", "pipeline.pause", "pipeline.resume", "pipeline.restart",
             "tasks.list", "tasks.cancel", "tasks.retry", "tasks.prioritize", "tasks.analyze",
             "sync.run", "sync.start", "sync.cancel", "sync.summary", "sync.solve", "sync.snap", "sync.matches",
+            "sync.points", "sync.add_point", "sync.remove_point",
             "correction.add", "correction.undo", "correction.redo", "correction.list",
             "timeline.get", "waveform.info", "export.xml",
             "cache.info", "cache.clear_unused",
@@ -882,7 +887,7 @@ class EngineService(AiMethods):
             )
         result = self._engine().solve(clips, matches, corrections, report_edges=False)
         result = self.with_ai_proposals(result)
-        project.save_placements(result)
+        project.save_placements(result, analysis_version=ANALYSIS_VERSION)
         placements = {int(cid): p for cid, p in result.placements.items()}
         return to_jsonable(build_timeline(rows, placements, int(result.reference_id)))
 
@@ -921,7 +926,8 @@ class EngineService(AiMethods):
         """Mass sync results: how many clips fall in each category, per source and overall."""
         index = self.media_index()
         cols = {c: k for k, c in enumerate(index["columns"])}
-        categories = ("synchronized", "high_confidence", "review", "manual", "failed", "skipped", "pending")
+        categories = ("synchronized", "confirmed", "high_confidence", "review", "manual", "failed", "skipped",
+                      "pending")  # fmt: skip
         total = Counter()
         per_device: dict[int | None, Counter] = defaultdict(Counter)
         conf: dict[int | None, list[float]] = defaultdict(list)
@@ -930,7 +936,7 @@ class EngineService(AiMethods):
             dev = row[cols["device_id"]]
             total[cat] += 1
             per_device[dev][cat] += 1
-            if cat == "high_confidence":
+            if cat in ("confirmed", "high_confidence"):  # "synchronized" counts every automatically synced clip
                 total["synchronized"] += 1
                 per_device[dev]["synchronized"] += 1
             if row[cols["confidence"]] is not None and cat not in ("skipped", "failed"):
@@ -985,7 +991,9 @@ class EngineService(AiMethods):
         run_id = project.last_completed_run()
         if run_id is None:
             return []
-        names = {r.id: r.name for r in project.clips()}
+        rows = project.clips()
+        names = {r.id: r.name for r in rows}
+        devices = {r.id: r.device_name for r in rows}
         rejected = project.corrections().rejected_pairs
         me = str(clip_id)
         out = []
@@ -1006,8 +1014,51 @@ class EngineService(AiMethods):
                 "flags": [f.value for f in m.all_flags],
                 "drift_ppm": drift or 0.0,
                 "rejected": frozenset((m.ref_id, m.tgt_id)) in rejected,
+                # The evidence behind the confidence: fine windows that agree to the millisecond, how far the peak
+                # stands out, correlation, and how much of the two recordings overlap.
+                "windows": m.estimate.n_windows,
+                "inliers": m.estimate.n_inliers,
+                "prominence": round(m.estimate.prominence, 1),
+                "correlation": round(m.estimate.correlation, 3),
+                "coarse_psr": round(m.estimate.coarse_psr, 1),
+                "overlap_s": round(m.estimate.overlap_s, 2),
+                "other_device": devices.get(int(other)),
             })  # fmt: skip
         return sorted(out, key=lambda d: -d["confidence"])
+
+    # ------------------------------------------------------------ sync points
+
+    def sync_points(self, clip_id: int) -> dict:
+        """The sync points set on a clip, the offset each implies, and the drift two or more of them measure.
+
+        A sync point says: this moment of the clip (``source_s``) happens at ``group_s`` on the sync group's
+        timeline. Each implies an offset (``group_s - source_s``); when several agree within a frame the clip is
+        confirmed there; their slope over the clip is its drift relative to the timeline.
+        """
+        project = self._require_project()
+        points = project.sync_points(clip_id)
+        offsets = [p["group_s"] - p["source_s"] for p in points]
+        drift_ppm = None
+        agree = None
+        if len(points) >= 2:
+            xs = np.array([p["source_s"] for p in points])
+            ys = np.array(offsets)
+            if np.ptp(xs) > 1.0:
+                slope = float(np.polyfit(xs, ys, 1)[0])
+                drift_ppm = slope * 1e6
+                fit = np.polyval(np.polyfit(xs, ys, 1), xs)
+                agree = bool(np.max(np.abs(fit - ys)) <= 0.5 / 25)  # every point within half a frame of the line
+        for p, off in zip(points, offsets, strict=True):
+            p["offset_s"] = off
+        return {"points": points, "drift_ppm": drift_ppm, "agree": agree}
+
+    def sync_add_point(self, clip_id: int, source_s: float, group_s: float, note: str | None = None) -> dict:
+        self._require_project().add_sync_point(clip_id, float(source_s), float(group_s), note)
+        return self.sync_points(clip_id)
+
+    def sync_remove_point(self, point_id: int) -> dict:
+        clip_id = self._require_project().remove_sync_point(point_id)
+        return self.sync_points(clip_id) if clip_id is not None else {"points": [], "drift_ppm": None, "agree": None}
 
     # ----------------------------------------------------------- corrections
 
@@ -1182,10 +1233,14 @@ def _category(
     if lone_device and placement.method not in (PlacementMethod.MANUAL, PlacementMethod.AUDIO):
         return "manual"
     if placement.method in (PlacementMethod.REFERENCE, PlacementMethod.MANUAL):
-        return "high_confidence" if placement.method == PlacementMethod.REFERENCE else "synchronized"
+        return "confirmed"  # the timeline's reference, or placed or accepted by the user
     if placement.status == PlacementStatus.NEEDS_REVIEW or placement.confidence < threshold:
         return "review"
-    return "high_confidence" if placement.confidence >= HIGH_CONFIDENCE else "synchronized"
+    if placement.confidence >= HIGH_CONFIDENCE:
+        # Confirmed: at least two other devices hold the clip through confident audio that agrees (the solver
+        # rejects edges that do not), independent evidence. One device alone: high confidence.
+        return "confirmed" if placement.corroboration >= 2 else "high_confidence"
+    return "synchronized"
 
 
 def _claim_stdio() -> tuple[int, int]:

@@ -1,7 +1,7 @@
 {
   "name": "syncora",
   "productName": "Syncora",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Syncora: automatic synchronisation of multicamera video and external audio, from one clip to thousands",
   "author": {
     "name": "Syncora contributors"

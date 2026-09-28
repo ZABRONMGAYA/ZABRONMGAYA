@@ -1,6 +1,7 @@
 """A wedding with known offsets, the way a small crew shoots it, to measure synchronisation where it is hard.
 
-    python -m mcsync.testing.multicam WORK_DIR [--out report.json] [--seed 7]
+    python -m mcsync.testing.multicam WORK_DIR [--out report.json] [--seed 7] [--scenario standard|hard|acceptance]
+    python -m mcsync.testing.multicam WORK_DIR --scenario acceptance --generate-only   # media + truth.json only
 
 Devices (every file is cut from one rendered scene, so every true offset is known to the sample):
 
@@ -67,6 +68,24 @@ HARD_GIMBAL = Device("GIMBAL", "camera", 60, (5.0, 25.0),
                       "direct_to_reverb_db": -6}, 2 * 3600 + 13 * 60 + 7.4)  # fmt: skip
 
 
+#: The multicamera preview's acceptance shoot: four cameras (one noisy gimbal, one recording ProRes, which Chromium
+#: cannot play, and a phone with a clip that has no sound) and two external recorders, over five and a half minutes.
+#: Every picture carries its scene frame number (see ``production._write_file``), so a test can check that every
+#: camera the preview shows is at the same moment.
+ACCEPTANCE = (
+    Device("ZOOM", "recorder", 1, (330.0, 330.0), {"snr_db": 35}),
+    Device("LAV", "recorder", 1, (240.0, 240.0), {"snr_db": 30, "gain_db": -12, "lowpass_hz": 6000}),
+    Device("FX3", "camera", 2, (100.0, 140.0), {"snr_db": 12, "reverb_rt60_s": 0.8, "direct_to_reverb_db": -3},
+           97.0),
+    Device("GIMBAL", "camera", 6, (14.0, 30.0), {"snr_db": 6, "gimbal_db": 6, "highpass_hz": 150, "gain_db": -6},
+           2 * 3600 + 13 * 60 + 7.4),
+    Device("A7IV", "camera", 2, (60.0, 90.0), {"snr_db": 15, "gain_db": -30}, -600.0),
+    Device("IPHONE", "phone", 3, (30.0, 50.0), {"snr_db": 15, "highpass_hz": 400, "lowpass_hz": 3000}, 3.0),
+)  # fmt: skip
+ACCEPTANCE_SCENE_S = 330.0
+LAV_START_S = {"acceptance": 40.0}
+
+
 @dataclass
 class Truth:
     device: str
@@ -76,6 +95,8 @@ class Truth:
 
 
 def devices(scenario: str) -> tuple[Device, ...]:
+    if scenario == "acceptance":
+        return ACCEPTANCE
     if scenario == "hard":
         return tuple(HARD_GIMBAL if d.name == "GIMBAL" else d for d in DEVICES)
     return DEVICES
@@ -85,15 +106,16 @@ def generate(root: Path, seed: int = 7, scenario: str = "standard") -> dict[str,
     """Write the shoot under ``root`` (existing files are kept) and return the truth per relative path."""
     root.mkdir(parents=True, exist_ok=True)
     scene_file = root / ".scene.npy"
+    scene_s = ACCEPTANCE_SCENE_S if scenario == "acceptance" else SCENE_S
     if not scene_file.is_file():
-        scene = make_scene(SCENE_S + 30, kind="mixed", rate=16000, seed=seed)
+        scene = make_scene(scene_s + 30, kind="mixed", rate=16000, seed=seed)
         np.save(scene_file, scene.samples)
     rng = np.random.default_rng(seed)
     truth: dict[str, Truth] = {}
     jobs: list[dict] = []
     for dev in devices(scenario):
         if dev.kind == "recorder":
-            start0 = 0.0 if dev.name == "ZOOM" else 300.0
+            start0 = 0.0 if dev.name == "ZOOM" else LAV_START_S.get(scenario, 300.0)
             for k in range(dev.clips):
                 start, dur = start0 + k * dev.length_s[0], dev.length_s[0]
                 rel = f"SOUND/{dev.name}/{dev.name}_{k + 1:03d}.WAV"
@@ -103,18 +125,22 @@ def generate(root: Path, seed: int = 7, scenario: str = "standard") -> dict[str,
                              "time_reference": int(round((36000 + start) * 48000))})  # fmt: skip
             continue
         lengths = rng.uniform(*dev.length_s, dev.clips)
-        spare = max(SCENE_S - lengths.sum() - 5.0, 0.0)
+        spare = max(scene_s - lengths.sum() - 5.0, 0.0)
         gaps = rng.dirichlet(np.ones(dev.clips + 1)) * spare
         t = float(gaps[0])
         for k in range(dev.clips):
-            rel = f"CARDS/{dev.name}/C{k + 1:04d}.MP4"
+            prores = scenario == "acceptance" and dev.name == "A7IV"
+            rel = f"CARDS/{dev.name}/C{k + 1:04d}.{'MOV' if prores else 'MP4'}"
             silent = dev.name == "IPHONE" and k == 2  # a clip recorded with the microphone off
             muted = scenario == "hard" and dev.name == "GIMBAL" and k % 5 == 4  # sound track, but only hiss
             settings = {"snr_db": -40, "gain_db": -40} if muted else dev.settings
             truth[rel] = Truth(dev.name, t, float(lengths[k]), has_audio=not silent and not muted)
-            jobs.append({"type": "mp4", "path": str(root / rel), "scene": None if silent else str(scene_file),
-                         "start": t, "duration": float(lengths[k]), "rate": 48000, "settings": settings,
-                         "created": _iso(t + dev.clock_error_s)})  # fmt: skip
+            job = {"type": "mp4", "path": str(root / rel), "scene": None if silent else str(scene_file),
+                   "start": t, "duration": float(lengths[k]), "rate": 48000, "settings": settings,
+                   "created": _iso(t + dev.clock_error_s)}  # fmt: skip
+            if scenario == "acceptance":
+                job["video"] = {"label": dev.name, "size": "320x180", "codec": "prores" if prores else "h264"}
+            jobs.append(job)
             t += float(lengths[k] + gaps[k + 1])
     todo = [j for j in jobs if not Path(j["path"]).is_file()]
     with ThreadPoolExecutor(max(1, min(8, os.cpu_count() or 2))) as pool:
@@ -240,8 +266,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("work", type=Path)
     parser.add_argument("--out", type=Path)
     parser.add_argument("--seed", type=int, default=7)
-    parser.add_argument("--scenario", choices=["standard", "hard"], default="standard")
+    parser.add_argument("--scenario", choices=["standard", "hard", "acceptance"], default="standard")
+    parser.add_argument("--generate-only", action="store_true", help="write the media and truth.json, then stop")
     args = parser.parse_args(argv)
+    if args.generate_only:
+        truth = generate(args.work / "media", args.seed, args.scenario)
+        print(json.dumps({"media": str(args.work / "media"), "files": len(truth)}))
+        return 0
     report = run(args.work / "media", args.work / "run", args.seed, args.scenario)
     report["scenario"] = args.scenario
     text = json.dumps(report, indent=2)

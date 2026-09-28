@@ -146,11 +146,28 @@ def _write_file(job: dict) -> str:
             "-metadata", "originator=ZOOM", "-metadata", "originator_reference=F6", str(out),
         ], pcm)  # fmt: skip
     else:
-        args = ["-f", "lavfi", "-i", f"color=c=0x383535:size=64x36:rate=25:duration={job['duration']}"]
+        video = job.get("video")
+        if video:
+            # Pictures that show where they are in the scene: the scene frame number as 16 bits (white blocks, least
+            # significant on the left) across the top, for tests to read back, and the scene time and camera as text.
+            s = float(job["start"])
+            bits = f"255*mod(trunc(((({s:.6f})+T)*25+0.5)/pow(2,trunc(X/(W/16)))),2)"
+            label = str(video.get("label", "")).replace(":", " ")
+            vf = (f"geq=lum='if(lt(Y,H*0.22),{bits},48+32*lt(mod(X+Y,64),32))':cb=128:cr=128,"
+                  f"drawtext=text='{label}  %{{pts\\:hms\\:{s:.3f}}}':x=8:y=h*0.62:fontsize=h/8:fontcolor=white")
+            args = ["-f", "lavfi", "-i", f"color=c=black:size={video.get('size', '320x180')}:rate=25:"
+                    f"duration={job['duration']}"]  # fmt: skip
+        else:
+            args = ["-f", "lavfi", "-i", f"color=c=0x383535:size=64x36:rate=25:duration={job['duration']}"]
         if pcm is not None:
             args += ["-f", "f32le", "-ar", str(job["rate"]), "-ac", "1", "-i", "pipe:0"]
         args += ["-map", "0:v"] + (["-map", "1:a"] if pcm is not None else [])
-        args += ["-c:v", "libx264", "-preset", "ultrafast", "-g", "250"]
+        if video:
+            args += ["-vf", vf]
+        if video and video.get("codec") == "prores":
+            args += ["-c:v", "prores_ks", "-profile:v", "0", "-pix_fmt", "yuv422p10le"]
+        else:
+            args += ["-c:v", "libx264", "-preset", "ultrafast", "-g", "25" if video else "250", "-pix_fmt", "yuv420p"]
         if pcm is not None:
             args += ["-c:a", "aac", "-b:a", "48k"]
         if job.get("timecode"):

@@ -5,33 +5,23 @@ import { useEffect } from "react";
 
 import type { Session } from "../../api/contract";
 import { Button, EmptyState, Select, SyncoraSymbol, shortcut } from "../../design-system/components";
-import { formatDuration, formatTime, parseRate } from "../../lib/format";
+import { formatDuration, formatTime } from "../../lib/format";
 import { useProd } from "../../state/production";
-import { displayedGroup, findClip, refreshIfStale, useApp, usePick } from "../../state/store";
+import { Transport } from "../multicam/Transport";
+import { displayedGroup, refreshIfStale, useApp, usePick } from "../../state/store";
 import { Tracks } from "./Tracks";
-import { frameDuration } from "./geometry";
 
 function isTyping(): boolean {
   const el = document.activeElement;
   return el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement;
 }
 
-/** Arrow keys nudge the selected clip: a frame, ten frames with Shift, a millisecond with Alt. */
+/** Escape deselects. (Nudging and the playhead are the Sync workspace's keys: , . and ← →.) */
 function useNudgeKeys(): void {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (isTyping() || e.ctrlKey || e.metaKey) return;
-      const { selected, timeline, nudge, select } = useApp.getState();
-      if (e.key === "Escape") {
-        select(null);
-        return;
-      }
-      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
-      const clip = findClip(timeline, selected);
-      if (!clip || clip.start_s === null) return;
-      e.preventDefault();
-      const step = e.altKey ? 0.001 : frameDuration(parseRate(clip.frame_rate)) * (e.shiftKey ? 10 : 1);
-      nudge(clip.clip_id, e.key === "ArrowLeft" ? -step : step);
+      if (e.key === "Escape") useApp.getState().select(null);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -212,6 +202,7 @@ export function TimelinePanel() {
   return (
     <section className="timeline" data-testid="timeline">
       <div className="timeline-bar">
+        {current && <Transport />}
         {(timeline?.groups.length ?? 0) <= 6 ? (
           <div className="tabs" role="tablist">
             {timeline?.groups.map((g) => (
@@ -267,7 +258,7 @@ export function TimelinePanel() {
         </button>
         {cursorS !== null && (
           <span className="muted" data-testid="cursor-time">
-            Cursor {formatTime(cursorS)}
+            Playhead {formatTime(cursorS)}
           </span>
         )}
         {current && (

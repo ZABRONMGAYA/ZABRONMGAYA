@@ -7,10 +7,12 @@ import { type PointerEvent, memo, useCallback, useEffect, useLayoutEffect, useRe
 import type { TimelineClip, TimelineGroup } from "../../api/contract";
 import { formatTime } from "../../lib/format";
 import { METHOD_LABELS, STATUS_LABELS } from "../../lib/labels";
+import { usePlayback } from "../../state/playback";
 import { useApp, usePick } from "../../state/store";
+import { clock, followClock } from "../multicam/clock";
 import { Ruler } from "./Ruler";
 import { type DrawStats, type Palette, TRACK_H, clipBox, drawTimeline, readPalette } from "./draw";
-import { anchorClip, hitTest, xToTime } from "./geometry";
+import { anchorClip, hitTest, timeToX, xToTime } from "./geometry";
 import { peaksNow } from "./peaks";
 import "./probe";
 
@@ -19,6 +21,7 @@ const DRAG_THRESHOLD_PX = 3;
 const KIND_ICONS: Record<string, LucideIcon> = { camera: Video, recorder: Mic, phone: Smartphone, drone: Plane };
 
 type Gesture =
+  | { kind: "scrub" }
   | { kind: "pan"; x0: number; startS0: number; moved: boolean }
   | { kind: "clip"; clip: TimelineClip; x0: number; moved: boolean; movable: boolean };
 
@@ -83,13 +86,16 @@ export function Tracks({ group }: { group: TimelineGroup }) {
   const stats = useRef<DrawStats>({ clips: 0, waveforms: 0 });
   const frame = useRef(0);
   const [drag, setDrag] = useState<{ clipId: number; deltaS: number } | null>(null);
+  const playhead = useRef<HTMLDivElement>(null);
+  const points = usePlayback((s) => s.points);
   const anchorId = anchorClip(group, timeline?.reference_clip_id ?? null)?.clip_id ?? null;
   const width = timelineWidth;
   const height = group.tracks.length * TRACK_H;
 
   // The latest inputs, for drawing from animation frames and for the probe.
-  const latest = useRef({ view, group, width, height, selected, anchorId, drag, cursorS });
-  latest.current = { view, group, width, height, selected, anchorId, drag, cursorS };
+  // The playhead is drawn above the canvas (it moves every frame while playing), not into it.
+  const latest = useRef({ view, group, width, height, selected, anchorId, drag, cursorS: null as number | null });
+  latest.current = { view, group, width, height, selected, anchorId, drag, cursorS: null };
 
   const draw = useCallback(() => {
     const el = canvas.current;
@@ -121,7 +127,24 @@ export function Tracks({ group }: { group: TimelineGroup }) {
   }, [draw]);
 
   // Draw in step with every change, before the browser paints.
-  useLayoutEffect(draw, [draw, view, group, width, height, selected, anchorId, drag, cursorS, peaksEpoch]);
+  useLayoutEffect(draw, [draw, view, group, width, height, selected, anchorId, drag, peaksEpoch]);
+
+  // The playhead follows the master clock; while playing, the view pages along with it.
+  const placePlayhead = useCallback((t: number, playing: boolean) => {
+    const el = playhead.current;
+    if (!el) return;
+    const { view, width } = latest.current;
+    let x = timeToX(t, view);
+    if (playing && (x > width - 24 || x < 0) && !clock.scrubbing) {
+      const next = { ...view, startS: t - (width * 0.1) / view.pxPerSec };
+      useApp.getState().setView(next);
+      x = timeToX(t, next);
+    }
+    el.style.transform = `translateX(${Math.round(x) - 1}px)`;
+    el.style.display = x < -2 || x > width + 2 ? "none" : "";
+  }, []);
+  useEffect(() => followClock(placePlayhead), [placePlayhead]);
+  useLayoutEffect(() => placePlayhead(clock.now(), false), [placePlayhead, view, width, cursorS]);
   useEffect(() => () => cancelAnimationFrame(frame.current), []);
 
   useEffect(() => {
@@ -194,8 +217,16 @@ export function Tracks({ group }: { group: TimelineGroup }) {
   function onDown(e: PointerEvent<HTMLDivElement>) {
     if (e.button !== 0) return;
     area.current!.setPointerCapture(e.pointerId);
+    const { x, y } = local(e);
+    if (y < 0) {
+      // The ruler scrubs: every camera shows the picture under the pointer, in sync.
+      gesture.current = { kind: "scrub" };
+      clock.scrubbing = true;
+      clock.pause();
+      setCursor(Math.max(0, xToTime(x, view)));
+      return;
+    }
     const clip = clipAt(e);
-    const { x } = local(e);
     gesture.current = clip
       ? { kind: "clip", clip, x0: x, moved: false, movable: clip.clip_id !== anchorId }
       : { kind: "pan", x0: x, startS0: view.startS, moved: false };
@@ -214,6 +245,10 @@ export function Tracks({ group }: { group: TimelineGroup }) {
       }
       return;
     }
+    if (g.kind === "scrub") {
+      setCursor(Math.max(0, xToTime(local(e).x, view)));
+      return;
+    }
     const dx = local(e).x - g.x0;
     if (!g.moved && Math.abs(dx) < DRAG_THRESHOLD_PX) return;
     g.moved = true;
@@ -225,6 +260,11 @@ export function Tracks({ group }: { group: TimelineGroup }) {
     const g = gesture.current;
     gesture.current = null;
     if (!g) return;
+    if (g.kind === "scrub") {
+      clock.scrubbing = false;
+      clock.seek(clock.now()); // players leave scrub mode (full-quality picture)
+      return;
+    }
     if (g.kind === "pan") {
       if (!g.moved) {
         setCursor(xToTime(local(e).x, view));
@@ -289,6 +329,7 @@ export function Tracks({ group }: { group: TimelineGroup }) {
           onPointerMove={onMove}
           onPointerUp={(e) => void onUp(e)}
           onPointerCancel={() => {
+            if (gesture.current?.kind === "scrub") clock.scrubbing = false;
             gesture.current = null;
             setDrag(null);
           }}
@@ -304,6 +345,19 @@ export function Tracks({ group }: { group: TimelineGroup }) {
             data-testid="clips-canvas"
           />
           <ClipList group={group} selected={selected} anchorId={anchorId} />
+          {points?.clipId === selected &&
+            points.points.map((p) => {
+              const x = timeToX(p.group_s, view);
+              return x < 0 || x > width ? null : (
+                <div
+                  key={p.id}
+                  className="sync-point"
+                  style={{ left: Math.round(x), top: RULER_H }}
+                  title={`Sync point ${formatTime(p.group_s)}`}
+                />
+              );
+            })}
+          <div className="playhead" ref={playhead} data-testid="playhead" aria-hidden />
         </div>
       </div>
     </div>

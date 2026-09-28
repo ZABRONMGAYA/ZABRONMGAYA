@@ -57,6 +57,7 @@ class TimelineClip:
     confidence: float = 0.0
     flags: tuple[str, ...] = ()
     drift_ppm: float = 0.0
+    corroboration: int = 0
 
     @property
     def end_s(self) -> float | None:
@@ -170,6 +171,7 @@ def build_timeline(
                 "confidence": p.confidence,
                 "flags": tuple(f.value for f in p.flags),
                 "drift_ppm": p.drift_ppm,
+                "corroboration": p.corroboration,
             }
         )
         if p.start_s is None or p.group is None:

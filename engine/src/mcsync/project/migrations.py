@@ -250,7 +250,53 @@ def _migrate_v3(conn: sqlite3.Connection) -> None:
             conn.execute(statement)
 
 
-MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {2: _migrate_v2, 3: _migrate_v3}
+# Version 4 (Syncora 1.3): sync points a user sets on a clip (a position in the clip and where it lands on its
+# sync group's timeline; two or more of them measure the clip's drift), the analysis version of each placement,
+# and ``sync_result``: every clip's synchronisation in one row (placement, evidence, manual adjustment, sync points).
+V4_SQL = """
+CREATE TABLE sync_point (
+    id         INTEGER PRIMARY KEY,
+    clip_id    INTEGER NOT NULL REFERENCES clip (id) ON DELETE CASCADE,
+    source_s   REAL NOT NULL,                 -- position in the clip
+    group_s    REAL NOT NULL,                 -- where it lands on the clip's sync group timeline
+    note       TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX sync_point_clip ON sync_point (clip_id);
+ALTER TABLE placement ADD COLUMN analysis_version TEXT;
+CREATE VIEW sync_result AS
+SELECT
+    c.media_id                                              AS media_id,
+    c.id                                                    AS clip_id,
+    c.device_id                                             AS camera_id,
+    c.session_id                                            AS session_id,
+    json_extract(p.placement_json, '$.group')               AS sync_group_id,
+    json_extract(pr.settings_json, '$.reference_clip_id')   AS master_reference_id,
+    json_extract(p.placement_json, '$.start_s')             AS offset,
+    json_extract(p.placement_json, '$.drift_ppm')           AS drift,
+    json_extract(p.placement_json, '$.method')              AS method,
+    json_extract(p.placement_json, '$.confidence')          AS confidence,
+    json_object('flags', json_extract(p.placement_json, '$.flags'),
+                'corroboration', json_extract(p.placement_json, '$.corroboration')) AS evidence,
+    json_extract(p.placement_json, '$.status')              AS status,
+    (SELECT k.offset_s FROM correction k WHERE k.clip_id = c.id AND k.kind = 'offset' AND k.undone_at IS NULL
+     ORDER BY k.id DESC LIMIT 1)                            AS manual_adjustment,
+    (SELECT COUNT(*) FROM sync_point s WHERE s.clip_id = c.id) AS sync_points,
+    p.analysis_version                                      AS analysis_version,
+    p.solved_at                                             AS updated_at
+FROM clip c
+JOIN placement p ON p.clip_id = c.id
+CROSS JOIN project pr
+"""
+
+
+def _migrate_v4(conn: sqlite3.Connection) -> None:
+    for statement in V4_SQL.split(";"):
+        if statement.strip():
+            conn.execute(statement)
+
+
+MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {2: _migrate_v2, 3: _migrate_v3, 4: _migrate_v4}
 LATEST = max(MIGRATIONS)
 
 

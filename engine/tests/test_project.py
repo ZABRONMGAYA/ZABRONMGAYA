@@ -192,3 +192,28 @@ def test_json_round_trips():
     assert media_info_to_dict(info, include_raw=False).get("raw") is None
     with pytest.raises(TypeError):
         to_jsonable(object())
+
+
+def test_sync_points_and_sync_result_view(project, tmp_path):
+    project.add_media([item(tmp_path / f"{k}.mov") for k in range(2)])
+    placement = ClipPlacement("2", 12.479, 0, PlacementMethod.AUDIO, 0.97, PlacementStatus.SYNCED, (Flag.DRIFT,),
+                              12.0, corroboration=2)  # fmt: skip
+    reference = ClipPlacement("1", 0.0, 0, PlacementMethod.REFERENCE, 1.0, PlacementStatus.SYNCED)
+    project.save_placements(SyncResult("1", {"1": reference, "2": placement}, [], []), analysis_version="test-1")
+    project.update_settings(reference_clip_id=1)
+    project.add_correction("offset", 2, other_clip_id=1, offset_s=12.5)
+    a = project.add_sync_point(2, 5.0, 17.479)
+    project.add_sync_point(2, 50.0, 62.4795)
+    assert [p["source_s"] for p in project.sync_points(2)] == [5.0, 50.0]
+    rows = {r["clip_id"]: r for r in project.sync_results()}
+    r = rows[2]
+    assert (r["camera_id"], r["sync_group_id"], r["master_reference_id"]) == (project.clip(2).device_id, 0, 1)
+    assert r["offset"] == pytest.approx(12.479) and r["drift"] == pytest.approx(12.0)
+    assert (r["method"], r["status"], r["confidence"]) == ("audio", "synced", pytest.approx(0.97))
+    assert r["manual_adjustment"] == pytest.approx(12.5) and r["sync_points"] == 2
+    assert r["analysis_version"] == "test-1" and r["updated_at"]
+    assert '"corroboration":2' in r["evidence"].replace(" ", "")
+    assert project.remove_sync_point(a) == 2 and len(project.sync_points(2)) == 1
+    assert project.remove_sync_point(a) is None
+    with pytest.raises(ProjectError):
+        project.add_sync_point(99, 1.0, 2.0)

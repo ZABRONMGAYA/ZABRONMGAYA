@@ -330,6 +330,9 @@ class ClipPlacement:
     #: Clock rate relative to the group anchor; positive runs fast. Playing the
     #: clip at speed ``1 / (1 - drift_ppm·1e-6)`` removes the drift entirely.
     drift_ppm: float = 0.0
+    #: Independent confirmation: how many other devices hold this clip through accepted confident audio matches.
+    #: Two or more agreeing devices make a placement CONFIRMED rather than merely high confidence.
+    corroboration: int = 0
 
 
 @dataclass

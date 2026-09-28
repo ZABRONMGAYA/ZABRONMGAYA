@@ -10,5 +10,5 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["e2e", "playwright.config.ts", "src/features/timeline/probe.ts"]
+  "include": ["e2e", "playwright.config.ts", "src/features/timeline/probe.ts", "src/features/multicam/probe.ts"]
 }

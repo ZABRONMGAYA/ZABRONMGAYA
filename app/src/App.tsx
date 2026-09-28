@@ -4,9 +4,7 @@ import { bridge, call } from "./api/client";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Toasts } from "./components/Toasts";
 import { ExportDialog } from "./features/export/ExportDialog";
-import { Inspector } from "./features/inspector/Inspector";
-import { ReviewQueue } from "./features/inspector/ReviewQueue";
-import { TimelinePanel } from "./features/timeline/TimelinePanel";
+import { SyncWorkspace } from "./features/multicam/SyncWorkspace";
 import { AnalyzeScreen } from "./screens/analyze/AnalyzeScreen";
 import { Dialogs } from "./screens/dialogs";
 import { Home } from "./screens/home/Home";
@@ -117,19 +115,9 @@ export function App() {
             <AnalyzeScreen />
           </ErrorBoundary>
         ) : (
-          <div className="workspace" data-testid="workspace">
-            <div className="panes">
-              <ErrorBoundary key="timeline" what="the timeline">
-                <TimelinePanel />
-              </ErrorBoundary>
-              <aside className="side">
-                <ErrorBoundary key="side" what="the clip details">
-                  <ReviewQueue />
-                  <Inspector />
-                </ErrorBoundary>
-              </aside>
-            </div>
-          </div>
+          <ErrorBoundary key="timeline" what="the sync workspace">
+            <SyncWorkspace />
+          </ErrorBoundary>
         )}
       </div>
       <StatusBar />

@@ -35,6 +35,9 @@ export class AudioMonitor {
   private busy = false;
   private off: (() => void) | null = null;
   volume = 1;
+  /** Chunks scheduled so far and the file of the last one (diagnostics and tests). */
+  chunks = 0;
+  lastPath: string | null = null;
 
   constructor() {
     this.off = clock.subscribe((e) => {
@@ -106,6 +109,8 @@ export class AudioMonitor {
         this.scheduledUntil = m + dur;
         if (!pcm || pcm.length < 2) continue;
         this.schedule(pcm, m, dur);
+        this.chunks++;
+        this.lastPath = src.path;
       }
     } finally {
       this.busy = false;

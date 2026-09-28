@@ -70,6 +70,12 @@ async function clickClip(name: string): Promise<void> {
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
 }
 
+/** Open the inspector's evidence (the audio matches behind the placement) if it is closed. */
+async function showEvidence(): Promise<void> {
+  const toggle = page.getByTestId("show-evidence");
+  if ((await toggle.textContent())?.includes("Show evidence")) await toggle.click();
+}
+
 async function startOf(name: string): Promise<number> {
   return Number(await page.getByTestId(`clip-${name}`).getAttribute("data-start"));
 }
@@ -184,7 +190,8 @@ test("explains a clip in the inspector", async () => {
   await clickClip("A002.MOV");
   const inspector = page.getByTestId("inspector");
   await expect(inspector).toContainText("A002.MOV");
-  await expect(page.getByTestId("inspector-status")).toHaveText("Synced");
+  await expect(page.getByTestId("inspector-status")).toHaveText(/CONFIRMED|HIGH CONFIDENCE|SYNCHRONIZED/);
+  await showEvidence();
   await expect(page.getByTestId("matches")).toContainText("230614_001.WAV");
 });
 
@@ -214,7 +221,7 @@ test("nudges a clip off and snaps it back to the audio", async () => {
   await page.getByTestId("clip-A002.MOV").focus();
   await page.keyboard.press("Enter");
   await expect(page.getByTestId("inspector")).toContainText("A002.MOV");
-  for (let i = 0; i < 3; i++) await page.keyboard.press("Shift+ArrowRight"); // 30 frames ≈ 1.25 s
+  for (let i = 0; i < 3; i++) await page.keyboard.press("Shift+Period"); // ⇧. : 10 frames later, ×3 ≈ 1.25 s
   await expect.poll(() => startOf("A002.MOV")).toBeGreaterThan(before + 1);
 
   await page.getByTestId("snap").click();
@@ -224,6 +231,7 @@ test("nudges a clip off and snaps it back to the audio", async () => {
 
 test("rejects a wrong match from the inspector and restores it", async () => {
   await clickClip("A002.MOV");
+  await showEvidence();
   await page.getByTestId("reject-230614_001.WAV").click();
   await expect(page.getByTestId("matches").getByRole("button", { name: "Restore" })).toBeVisible();
   await page.getByTestId("matches").getByRole("button", { name: "Restore" }).click();

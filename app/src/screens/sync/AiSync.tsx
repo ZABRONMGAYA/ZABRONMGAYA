@@ -89,7 +89,8 @@ export function AiSync() {
   }
 
   const name = clip?.name ?? `Clip ${clipId}`;
-  const synced = clip?.category === "synchronized" || clip?.category === "high_confidence";
+  const synced =
+    clip?.category === "synchronized" || clip?.category === "high_confidence" || clip?.category === "confirmed";
   const duration = result?.duration_s ?? clip?.duration_s ?? 0;
   const status = best ? statusFor(best.confidence, threshold) : null;
   const lanes = best ? LANES.filter((l) => best.lanes[l.lane] || best.evidence.some((e) => e.lane === l.lane)) : LANES;

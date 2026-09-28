@@ -70,3 +70,16 @@ def test_thousands_of_jobs_run_on_a_bounded_pool():
         results = list(pool.map(_square, range(4000), chunksize=64))
     assert results[-1] == 3999 * 3999 and len(results) == 4000
     assert len(pool._processes or {}) <= workers  # type: ignore[attr-defined]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="the 61-process limit is Windows's")
+def test_a_pool_asked_for_more_than_61_matchers_starts_on_windows():
+    """On Windows, ProcessPoolExecutor(max_workers=64) raises "max_workers must be <= 61"; the engine's pool caps."""
+    from mcsync.sync.engine import create_match_pool
+
+    pool = create_match_pool(64)
+    try:
+        assert pool._max_workers == 61  # noqa: SLF001
+        assert pool.submit(sum, [1, 2]).result() == 3
+    finally:
+        pool.shutdown()

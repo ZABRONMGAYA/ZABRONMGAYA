@@ -20,6 +20,8 @@ import { useAnalyze } from "../../state/analyze";
 import { useProd } from "../../state/production";
 import { useApp } from "../../state/store";
 import { CATEGORY_LABEL, deviceLetters } from "../media/labels";
+import { SyncWorkspace } from "../../features/multicam/SyncWorkspace";
+import { startReview } from "../../features/multicam/ReviewBar";
 import { AiSync } from "./AiSync";
 
 export function SyncScreen() {
@@ -50,6 +52,16 @@ export function SyncScreen() {
         >
           Results
         </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={view === "workspace"}
+          onClick={() => useProd.getState().setSyncView("workspace")}
+          disabled={!summary?.last_run}
+          data-testid="sync-view-workspace"
+        >
+          Workspace
+        </button>
         {aiClip !== null && (
           <button
             type="button"
@@ -62,7 +74,15 @@ export function SyncScreen() {
           </button>
         )}
       </div>
-      {view === "ai" ? <AiSync /> : view === "results" && summary?.last_run ? <Results /> : <Analysis />}
+      {view === "ai" ? (
+        <AiSync />
+      ) : view === "workspace" && summary?.last_run ? (
+        <SyncWorkspace />
+      ) : view === "results" && summary?.last_run ? (
+        <Results />
+      ) : (
+        <Analysis />
+      )}
     </div>
   );
 }
@@ -388,7 +408,7 @@ function SourceProgress() {
       e.total++;
       if (r.analysis === "done" || r.channels === null) e.analysed++;
       if (r.analysis === "failed") e.failed++;
-      if (r.category === "synchronized" || r.category === "high_confidence") e.synced++;
+      if (r.category === "synchronized" || r.category === "high_confidence" || r.category === "confirmed") e.synced++;
       m.set(r.device_id, e);
     }
     return m;
@@ -488,6 +508,7 @@ function ErrorsDialog({ onClose }: { onClose: () => void }) {
 
 const CATEGORY_ORDER: { key: ResultCategory; query: string }[] = [
   { key: "synchronized", query: "synchronized" },
+  { key: "confirmed", query: "confirmed" },
   { key: "high_confidence", query: "confidence >= 95%" },
   { key: "review", query: "review" },
   { key: "manual", query: "manual" },
@@ -541,7 +562,19 @@ function Results() {
             Save report
           </Button>
           {c.review > 0 && (
-            <Button variant="warning" size="dialog" onClick={() => goto("review")} data-testid="review-clips">
+            <Button
+              variant="warning"
+              size="dialog"
+              onClick={() => {
+                useProd.getState().setSyncView("workspace");
+                // The review opens once the workspace has the timeline.
+                void useApp
+                  .getState()
+                  .refresh()
+                  .then(() => startReview());
+              }}
+              data-testid="review-clips"
+            >
               Review {c.review.toLocaleString()} clip{c.review === 1 ? "" : "s"}
             </Button>
           )}

@@ -59,6 +59,7 @@ export function cardMeta(row: MediaRow, sessions: Map<number, Session>): string 
 export function rowStatus(row: MediaRow, threshold: number): SyncStatus {
   if (row.method === "reference") return "reference";
   switch (row.category) {
+    case "confirmed":
     case "high_confidence":
       return "high";
     case "synchronized":
@@ -78,6 +79,7 @@ export function rowStatus(row: MediaRow, threshold: number): SyncStatus {
 
 export function squareFor(row: MediaRow): "ok" | "review" | "failed" | "none" {
   switch (row.category) {
+    case "confirmed":
     case "high_confidence":
     case "synchronized":
       return "ok";
@@ -92,6 +94,7 @@ export function squareFor(row: MediaRow): "ok" | "review" | "failed" | "none" {
 
 export const CATEGORY_LABEL: Record<MediaRow["category"], string> = {
   synchronized: "Synchronized",
+  confirmed: "Confirmed",
   high_confidence: "High confidence",
   review: "Review recommended",
   manual: "Manual sync required",

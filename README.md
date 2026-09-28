@@ -62,9 +62,9 @@ The larger speech models (Whisper small and turbo) download on demand from Setti
 Installers for Windows 10/11 (64-bit) and macOS 12+ (Apple Silicon and Intel) are built and tested by the
 [release workflow](.github/workflows/release.yml):
 
-* `Syncora-Setup-1.2.0.exe`
-* `Syncora-1.2.0-macOS-arm64.dmg`
-* `Syncora-1.2.0-macOS-x64.dmg`
+* `Syncora-Setup-1.3.0.exe`
+* `Syncora-1.3.0-macOS-arm64.dmg`
+* `Syncora-1.3.0-macOS-x64.dmg`
 
 Download them from the repository's Releases page, or from the workflow run's artifacts.
 

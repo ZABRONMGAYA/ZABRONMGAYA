@@ -23,6 +23,7 @@ import type {
 } from "../api/contract";
 import { formatOffset } from "../lib/format";
 import { defaultPresetId, presetById } from "../lib/presets";
+import { clock } from "../features/multicam/clock";
 import { type View, anchorClip, clampView, fitView, offsetForStart, zoomAround } from "../features/timeline/geometry";
 import { forgetPeaks } from "../features/timeline/peaks";
 import { transcriptsChanged, useAnalyze } from "./analyze";
@@ -646,6 +647,8 @@ export const useApp = create<AppState>((set, get) => ({
 
   setCursor(timeS) {
     set({ cursorS: timeS });
+    // The edit cursor is the playhead of the master clock (viewer, audio monitor, timecode).
+    if (timeS !== null && Math.abs(clock.now() - timeS) > 1e-6) clock.seek(timeS);
   },
 
   invalidatePeaks() {

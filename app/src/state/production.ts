@@ -44,7 +44,7 @@ export type Bin =
 
 export interface ProdState {
   stage: Stage;
-  syncView: "analysis" | "results" | "ai";
+  syncView: "analysis" | "results" | "ai" | "workspace";
   mediaView: "grid" | "list";
   importing: boolean;
   settings: SettingsCategory | null;
@@ -64,7 +64,7 @@ export interface ProdState {
 
   reset(project: ProjectSummary | null): void;
   setStage(stage: Stage): void;
-  setSyncView(view: "analysis" | "results" | "ai"): void;
+  setSyncView(view: "analysis" | "results" | "ai" | "workspace"): void;
   setMediaView(view: "grid" | "list"): void;
   setImporting(on: boolean): void;
   openSettings(category?: SettingsCategory): void;

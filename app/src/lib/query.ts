@@ -1,7 +1,7 @@
 // Search and filter grammar for large projects. A query is a list of clauses that must all match:
 //   free text        Camera A · C0012 · ceremony      (name, folder, camera, codec)
 //   time of day      08:30 - 10:00 · 14:00-15:30       (recording time, local clock)
-//   status words     unsynchronized · synced · review · failed · offline · duplicate · pending · skipped
+//   status words     unsynchronized · synced · confirmed · review · failed · offline · duplicate · pending · skipped
 //   kinds            video · audio · no audio
 //   comparisons      confidence < 80% · duration > 60s · fps = 25
 import type { MediaRow } from "../api/contract";
@@ -17,6 +17,7 @@ export type Clause =
 type StatusWord =
   | "unsynchronized"
   | "synchronized"
+  | "confirmed"
   | "review"
   | "failed"
   | "offline"
@@ -37,6 +38,7 @@ const STATUS_WORDS: Record<string, StatusWord> = {
   synchronized: "synchronized",
   synchronised: "synchronized",
   synced: "synchronized",
+  confirmed: "confirmed",
   review: "review",
   "needs review": "review",
   failed: "failed",
@@ -164,7 +166,9 @@ export function matchesStatus(row: MediaRow, status: StatusWord): boolean {
     case "unsynchronized":
       return row.category === "manual" || row.category === "pending" || row.category === "failed";
     case "synchronized":
-      return row.category === "synchronized" || row.category === "high_confidence";
+      return row.category === "synchronized" || row.category === "high_confidence" || row.category === "confirmed";
+    case "confirmed":
+      return row.category === "confirmed";
     case "review":
       return row.category === "review";
     case "failed":

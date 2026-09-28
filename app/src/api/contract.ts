@@ -128,6 +128,7 @@ export interface TaskRow {
 
 export type ResultCategory =
   | "synchronized"
+  | "confirmed"
   | "high_confidence"
   | "review"
   | "manual"
@@ -359,6 +360,8 @@ export interface TimelineClip {
   confidence: number;
   flags: string[];
   drift_ppm: number;
+  /** Other devices whose confident audio matches agree on this placement (2 or more: confirmed). */
+  corroboration?: number;
 }
 
 export interface TimelineTrack {
@@ -439,6 +442,36 @@ export interface ClipMatch {
   flags: string[];
   drift_ppm: number;
   rejected: boolean;
+  /** The evidence: analysis windows compared and how many agree to the millisecond, how far the correlation
+   * peak stands out (same sound: 25 and more), correlation and overlap of the two recordings. */
+  windows?: number;
+  inliers?: number;
+  prominence?: number;
+  correlation?: number;
+  coarse_psr?: number;
+  overlap_s?: number;
+  other_device?: string | null;
+}
+
+/** A moment of a clip pinned to the sync group's timeline by the user. */
+export interface SyncPoint {
+  id: number;
+  clip_id: number;
+  /** Position in the clip. */
+  source_s: number;
+  /** Where it lands on the sync group's timeline. */
+  group_s: number;
+  /** group_s - source_s: the clip's start the point implies. */
+  offset_s: number;
+  note: string | null;
+  created_at: string;
+}
+
+export interface SyncPoints {
+  points: SyncPoint[];
+  /** Two or more points: the drift their slope measures (ppm), and whether they all agree within half a frame. */
+  drift_ppm: number | null;
+  agree: boolean | null;
 }
 
 export type ExportFormat = "xmeml" | "fcpxml";
@@ -702,6 +735,9 @@ export interface EngineMethods {
   "sync.solve": [Record<string, never>, Timeline];
   "sync.snap": [{ clip_id: number; anchor_clip_id: number; approx_offset_s: number; radius_s?: number }, SnapResult];
   "sync.matches": [{ clip_id: number }, ClipMatch[]];
+  "sync.points": [{ clip_id: number }, SyncPoints];
+  "sync.add_point": [{ clip_id: number; source_s: number; group_s: number; note?: string }, SyncPoints];
+  "sync.remove_point": [{ point_id: number }, SyncPoints];
   "correction.add": [{ kind: CorrectionKind; clip_id: number; other_clip_id?: number; offset_s?: number }, Timeline];
   "correction.undo": [Record<string, never>, Timeline];
   "correction.redo": [Record<string, never>, Timeline];
@@ -790,6 +826,9 @@ export const ENGINE_METHODS: readonly Method[] = [
   "sync.solve",
   "sync.snap",
   "sync.matches",
+  "sync.points",
+  "sync.add_point",
+  "sync.remove_point",
   "correction.add",
   "correction.undo",
   "correction.redo",

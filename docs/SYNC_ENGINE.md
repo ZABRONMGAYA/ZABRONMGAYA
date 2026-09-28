@@ -65,8 +65,17 @@ contours:
   neither favoured nor penalised.
 * **Peak-to-sidelobe ratio (PSR):** a robust z-score, `(z − median) / (1.4826·MAD)`, computed over all admissible
   lags. When a search window restricts where the peak may be, the null distribution is still estimated from all lags.
-* **Candidates:** the top `max_candidates + 1` local maxima at least 150 ms apart. Candidates below PSR 5 are
-  `no_correlation`. Only candidates within 60 % of the best PSR are refined.
+* **Band envelope (1.3):** a second contour made for noisy cameras. For 12 bands between 300 and 3500 Hz, each
+  band's log energy minus its own 1 s running mean, divided by that band's MAD and clipped to −3…6, averaged over
+  the bands. Stationary noise (gimbal motors, wind, hum) is a steady level in its band, so it cancels; speech and
+  music onsets stand out in several bands at once. On the gimbal benchmark the true offset's z-score is 5.8 with the
+  band envelope against 0.8 with the broadband one. Both contours are searched and their peaks merged.
+* **Candidates:** the top `max_candidates + 1` local maxima at least 150 ms apart, from both contours. Candidates from
+  PSR 3.5 (`refine_psr`) are refined, as long as they are within 60 % of the best. A match whose best candidate is
+  below PSR 5 (`detection_psr`) stands only if the fine stage verifies it (3 or more windows agreeing to the
+  millisecond); otherwise it is `no_correlation`.
+* **Narrow searches** (a window at most 10 s wide, as predicted by a calibrated clock, see §8.1) hold too few lags
+  for a meaningful PSR: their best candidates go to the fine stage whatever their PSR, and the fine stage decides.
 
 ## 4. Fine stage: exactly where?
 
@@ -83,6 +92,9 @@ evenly over the overlap. Each window:
 * **Waveform correlation** (Pearson ρ) is recorded per window for diagnostics and the UI. It does not enter the
   confidence, because it does not separate true from false matches: a true match at −10 dB SNR in a 2 s reverb has ρ
   near 0.03, as do beat-aligned unrelated songs.
+* **Peak prominence (1.3):** each window's GCC-PHAT correlogram is also computed over ±0.25 s, and the peak's
+  robust z-score over that span is its prominence. The same sound gives 25–40; rhythmic look-alikes (beat grids,
+  footsteps) stay at 10 or below. The match's prominence is the median over its inlier windows.
 * Windows quieter than −35 dB relative to the clip are skipped.
 * **Progressive verification:** windows are visited in a spread-out order (both ends, middle, quarters…). If fewer than
   3 of the first 4 agree, the candidate is abandoned. True matches agree almost everywhere, so this halves the cost of
@@ -114,10 +126,11 @@ within 5 µs.
 ```
 verification = count(n_inliers) × (0.3 + 0.7 · smoothstep(inlier_fraction, 0.4, 0.9))
                count: 0 → 0, 1 → 0.5, 2 → 0.65, ≥3 → 1
-detection    = smoothstep(coarse PSR, 5, 10)
+detection    = smoothstep(coarse PSR, 5, 10), or smoothstep(prominence, 15, 30) if higher and ≥ 3 windows agree
 overlap      = smoothstep(overlap_s, 3 s, 10 s)
 confidence   = verification × (0.7 + 0.3·detection) × (0.8 + 0.2·overlap)
                capped at 0.5 when ambiguous, or when the verified windows correlate below 0.1 (weak_correlation)
+               unless their peak prominence shows the same sound (≥ 15)
 ```
 
 `confident` ≥ 0.7 > `uncertain` ≥ 0.35 > `no_match`.
@@ -210,7 +223,28 @@ For each clip:
 * `confidence`;
 * `status`: synced, needs_review or unsynced;
 * `flags`;
-* `drift_ppm`.
+* `drift_ppm`;
+* `corroboration`: how many other devices hold the clip through accepted confident audio matches.
+
+**Result statuses** (`sync.summary`, the Results screen, the inspector; stored in the project's `sync_result` view with
+the method, confidence, evidence, drift, manual adjustment, sync points and analysis version):
+
+| Status | When |
+|---|---|
+| Confirmed | the reference; placed or accepted by the user; or confidence ≥ 95 % with 2 or more other devices agreeing |
+| High confidence | confidence ≥ 95 %, one device's evidence |
+| Synchronized | confidence at or above the review threshold |
+| Review recommended | below the threshold, placed by a camera clock alone, or contradicted by other evidence |
+| Manual sync required | nothing places the clip (never guessed) |
+| Failed / Skipped | unreadable; excluded or an ignored duplicate |
+
+A recording time alone never makes a clip synchronized: clock placements are always for review.
+
+**Calibrated clocks outweigh uncertain matches (1.3).** Least squares trusts a tight audio edge over a clock edge,
+so when a clip's only audio evidence is uncertain (< 0.7) and disagrees with its device's clock, outlier rejection
+used to drop the clock and keep the audio, placing a muted gimbal clip 20 minutes away. When the clock domain is
+calibrated by three or more confidently matched clips, the uncertain match is rejected instead (`clock_mismatch`)
+and the clip is placed by its clock, still for review. A confident match is never overruled by a clock.
 
 `start_s` is the **best constant placement** `x + r·D/2`: an NLE plays each clip at nominal speed from one position,
 and this centres the residual drift error (±r·D/2) on the clip. `drift_ppm` allows exact retiming (speed
@@ -259,7 +293,13 @@ a funnel (`sync/candidates.py`):
    full matcher verifies each one in a narrow window around the voted offset (`verify_pair`).
 3. **Extended search:** clips still without a confident match get a full-range search against a bounded number of
    likely partners: the clips their votes pointed to, and the longest recordings nearest in recording time.
-4. **Manual:** whatever is left is reported for manual sync, never guessed.
+4. **Clock anchoring (temporal continuity, 1.3):** from the placements so far, each device's clock offset is
+   calibrated (median of start − recording time over its confidently matched clips; spread from their MAD). Each
+   clip of that device still without a confident match is searched again in a narrow window (±max(1.5 s, 3 × spread)
+   plus drift) around where its clock puts it, against up to 3 confidently placed recordings of other devices that
+   overlap it (sound recorders first). Short, noisy clips that a full-range search cannot single out are found this
+   way; wrong windows produce no verified match (checked by searching deliberately shifted windows).
+5. **Manual:** whatever is left is reported for manual sync, never guessed.
 
 In the 4,230-clip stress production the funnel planned 26,388 pairs: 0.3 % of the 8.8 million possible pairs.
 
@@ -274,6 +314,26 @@ In the 4,230-clip stress production the funnel planned 26,388 pairs: 0.3 % of th
 | 3 h reference vs 20 min clip with 20 ppm drift | 1.4 s preparation (from 8 kHz PCM) + 0.35 s matching; error 2 µs; drift 20.0 ppm |
 | 24 clips around a 1 h recorder (221 pairs) | 13.2 s analysis (60 ms/pair, one core); 2.4 ms solve; 24/24 synced |
 | Engine memory | about 3× the analysis signal at peak (330 MB while preparing and matching a 1 h recording) |
+
+### 9.1 Multicamera benchmark (`python -m mcsync.testing.multicam`)
+
+A wedding cut from one rendered scene, so every offset is known: a sound recorder (2 × 20 min), a lavalier, a main
+camera from the back of the room (reverberant), a gimbal camera with 60 short clips whose microphone mostly hears
+motors and wind, a quiet camera (−30 dB) and a phone with one clip without sound (85 files). The **hard** scenario
+makes the gimbal worse: 5–25 s clips, motors and wind 12 dB above the room, reverberant, and one clip in five muted.
+Measured on 4 cores (false match: reported synchronized or high confidence but more than a frame wrong):
+
+| Scenario | Version | Gimbal: synced / review / manual | All 85: auto-synced | False matches | Worst placement |
+|---|---|---|---|---|---|
+| standard | 1.2 | 54 / 6 / 0 | 78 | 0 | 0.32 s (clock only, review) |
+| standard | 1.3 | 60 / 0 / 0 | 84 | 0 | 0.32 s (clock only, review) |
+| hard | 1.2 | 0 / 0 / 60 | 24 | 0 | — (60 clips unplaced) |
+| hard | 1.3 | 43 / 17 / 0 | 67 | 0 | 0.50 s (clock only, review) |
+
+In the hard scenario, the 17 gimbal clips left for review are the 12 muted clips (placed by the calibrated camera
+clock, within 0.5 s), 2 clips whose sound the matcher cannot single out (clock, within 0.5 s) and 3 exact audio
+matches whose confidence stays below the threshold (short overlaps). Sync time rose from 32 s to 55 s for the
+anchoring searches.
 
 ## 10. Known limitations and planned work
 
@@ -301,7 +361,10 @@ Defaults live in `sync/params.py` (`SyncParams`, `SolverParams`). Each is docume
 | `band_low_hz`, `band_high_hz` | 150, 3500 Hz | Analysis band. |
 | `feature_rate` | 200 Hz | Coarse resolution (5 ms). |
 | `min_overlap_s` | 3 s | Shortest overlap that can be matched. |
-| `detection_psr` | 5 | Coarse gate. |
+| `detection_psr` | 5 | Clear coarse detection; below it the fine stage must verify. |
+| `refine_psr` | 3.5 | Weakest coarse candidate refined (narrow searches: all). |
+| `band_env_low_hz`, `band_env_high_hz`, `band_env_bands` | 300, 3500 Hz, 12 | Band envelope for noisy cameras. |
+| `same_sound_prominence` | 15 | Peak prominence that shows the same sound. |
 | `fine_window_s` / `max_fine_windows` | 10 s / 12 | Verification strength vs cost. |
 | `phat_beta` | 0.8 | Whitening strength. |
 | `inlier_tolerance_s` | 1 ms | Window agreement tolerance. |
