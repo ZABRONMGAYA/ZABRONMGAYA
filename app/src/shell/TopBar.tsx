@@ -4,16 +4,12 @@ import { useEffect } from "react";
 
 import { Button, SyncoraSymbol, shortcut } from "../design-system/components";
 import { type Stage, useProd } from "../state/production";
-import { useApp } from "../state/store";
+import { openSearch, useApp } from "../state/store";
 
 const STAGES: { id: Stage; label: string; disabled?: string }[] = [
   { id: "media", label: "Media" },
   { id: "sync", label: "Sync" },
-  {
-    id: "analyze",
-    label: "Analyze",
-    disabled: "Transcription, speaker and AI analysis are not included in this version of Syncora.",
-  },
+  { id: "analyze", label: "Analyze" },
   { id: "timeline", label: "Timeline" },
   { id: "export", label: "Export" },
 ];
@@ -78,14 +74,10 @@ export function TopBar() {
         <button
           type="button"
           className="sy-btn sy-btn--icon"
-          aria-label="Search media"
-          title={`Search media (${shortcut("⌘F")})`}
-          onClick={() => {
-            useProd.getState().setStage("media");
-            requestAnimationFrame(() =>
-              document.querySelector<HTMLInputElement>("[data-testid=media-search]")?.focus(),
-            );
-          }}
+          aria-label="Search moments"
+          title={`Search what was said, speakers and markers (${shortcut("⌘K")})`}
+          onClick={openSearch}
+          data-testid="open-search"
         >
           <Search size={14} aria-hidden />
         </button>

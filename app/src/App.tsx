@@ -7,6 +7,7 @@ import { ExportDialog } from "./features/export/ExportDialog";
 import { Inspector } from "./features/inspector/Inspector";
 import { ReviewQueue } from "./features/inspector/ReviewQueue";
 import { TimelinePanel } from "./features/timeline/TimelinePanel";
+import { AnalyzeScreen } from "./screens/analyze/AnalyzeScreen";
 import { Dialogs } from "./screens/dialogs";
 import { Home } from "./screens/home/Home";
 import { MediaScreen } from "./screens/media/MediaScreen";
@@ -14,8 +15,9 @@ import { Settings, savedWorkers } from "./screens/settings/Settings";
 import { SyncScreen } from "./screens/sync/SyncScreen";
 import { StatusBar } from "./shell/StatusBar";
 import { TopBar } from "./shell/TopBar";
+import { useAnalyze } from "./state/analyze";
 import { useProd } from "./state/production";
-import { useApp } from "./state/store";
+import { openSearch, useApp } from "./state/store";
 
 export function App() {
   const init = useApp((s) => s.init);
@@ -47,6 +49,16 @@ export function App() {
       } else if (mod && e.key.toLowerCase() === "b") {
         e.preventDefault();
         prod.setStage("media");
+      } else if (mod && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        openSearch();
+      } else if (e.key === "A" && e.shiftKey && !mod) {
+        // ⇧A: AI sync for the selected clip (S07).
+        const selected = useApp.getState().selected;
+        if (selected !== null) {
+          e.preventDefault();
+          void useAnalyze.getState().openAiSync(selected);
+        }
       }
     };
     window.addEventListener("keydown", onKey);
@@ -99,6 +111,10 @@ export function App() {
         ) : stage === "sync" ? (
           <ErrorBoundary key="sync" what="the synchronisation screen">
             <SyncScreen />
+          </ErrorBoundary>
+        ) : stage === "analyze" ? (
+          <ErrorBoundary key="analyze" what="the analysis screen">
+            <AnalyzeScreen />
           </ErrorBoundary>
         ) : (
           <div className="workspace" data-testid="workspace">

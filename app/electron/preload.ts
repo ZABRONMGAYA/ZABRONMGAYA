@@ -25,6 +25,7 @@ const bridge: Bridge = {
   pathForFile: (file) => webUtils.getPathForFile(file),
   readPeaks: (directory, file, offset, length) => ipcRenderer.invoke("peaks:read", directory, file, offset, length),
   readThumbnail: (file) => ipcRenderer.invoke("thumb:read", file),
+  mediaUrl: (file) => `syncora-media://media/${encodeURIComponent(file)}`,
   platform: process.platform,
 };
 

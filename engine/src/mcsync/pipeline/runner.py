@@ -1065,7 +1065,12 @@ class Pipeline:
             "sync": dict(s) if s else None,
             "aux": self._aux_label if self._aux is not None else None,
             "running": running,
-            "workers": {"probe": self.plan.probe, "analyze": self.plan.analyze, "match": self.service.match_workers},
+            "workers": {
+                "probe": self.plan.probe,
+                "analyze": self.plan.analyze,
+                "match": self.service.match_workers,
+                "speech": 1,
+            },
             "activity": list(self._activity)[-60:],
         }
 

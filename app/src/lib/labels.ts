@@ -9,6 +9,7 @@ export const REASON_LABELS: Record<ReviewReason, string> = {
   metadata_only: "Placed by camera clock only",
   unsynced: "Not placed",
   offline: "Media offline",
+  ai_proposal: "Proposed by AI sync",
 };
 
 export const FLAG_LABELS: Record<string, string> = {
@@ -36,6 +37,7 @@ export const FLAG_LABELS: Record<string, string> = {
   no_audio: "The clip has no audio: placed by timecode or clock, or by hand.",
   user_rejected: "You rejected this match.",
   below_threshold: "The match was too weak to use.",
+  ai_proposal: "Placed by AI sync from speech, light changes and the camera clocks: check it, then confirm or move it.",
 };
 
 export const METHOD_LABELS: Record<TimelineClip["method"], string> = {
@@ -45,6 +47,7 @@ export const METHOD_LABELS: Record<TimelineClip["method"], string> = {
   metadata: "Camera clock",
   chapter: "Chapter",
   manual: "Manual",
+  ai: "AI sync",
   none: "—",
 };
 

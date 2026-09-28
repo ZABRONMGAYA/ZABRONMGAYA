@@ -41,6 +41,7 @@ function installBridge(handlers: Partial<Record<Method, Handler>>): unknown[][] 
     pathForFile: () => "",
     readPeaks: async () => new Uint8Array(),
     readThumbnail: async () => new Uint8Array(),
+    mediaUrl: (file: string) => `syncora-media://media/${encodeURIComponent(file)}`,
     platform: "test",
   };
   window.mcsync = bridge;

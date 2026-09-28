@@ -29,6 +29,9 @@ if TYPE_CHECKING:
 
 #: Search scores: an utterance with the whole phrase, with all its words, or with some of them.
 _MATCH_SCORE = {"phrase": 1.0, "all words": 0.9, "some words": 0.6}
+#: How a placement was made, in the words of AI sync's explanation.
+_PLACED_BY = {"audio": "its audio", "timecode": "timecode", "metadata": "its camera clock", "chapter": "its chapter",
+              "manual": "hand", "ai": "AI sync"}  # fmt: skip
 #: A clip covering less new time than this is not transcribed again by "smart" scope (its moments already are).
 _MIN_NEW_S = 10.0
 
@@ -434,6 +437,12 @@ class AiMethods:
                 if me in (m.ref_id, m.tgt_id) and m.estimate.correlation is not None:
                     best = max(best or 0.0, float(m.estimate.correlation))
         placed = p is not None and p.start_s is not None
+        if placed and p.status == PlacementStatus.SYNCED:
+            if p.method == PlacementMethod.REFERENCE:
+                return f"{row.name} is the reference recording: AI sync checks it against the others."
+            how = _PLACED_BY.get(p.method.value, p.method.value)
+            return (f"{row.name} is already placed by {how} at {p.confidence:.0%} confidence: AI sync checks the "
+                    "placement with other evidence.")  # fmt: skip
         if placed and p.status == PlacementStatus.NEEDS_REVIEW:
             return f"{row.name} was placed with low confidence ({p.confidence:.0%})."
         if best is not None:
@@ -469,7 +478,11 @@ class AiMethods:
         return project.transcript(row.id)
 
     def ai_fallback(self) -> dict:
-        """AI sync for every clip audio could not place (the automatic fallback, after a sync), as a job."""
+        """AI sync for every clip audio could not place, as a job (asked for by the user: its proposals are shown
+        for review whether or not the automatic fallback is switched on)."""
+        return self._fallback("fallback")
+
+    def _fallback(self, source: str) -> dict:
         project = self._require_project()
 
         def work(job: Job) -> dict:
@@ -484,7 +497,7 @@ class AiMethods:
                     break
                 job.report(k / max(1, len(todo)), f"AI sync: {r.name} ({k + 1} of {len(todo)})")
                 try:
-                    result = self._ai_sync(r.id, source="auto")
+                    result = self._ai_sync(r.id, source=source)
                 except Exception as exc:  # noqa: BLE001 - one clip's problem does not stop the others
                     self.log(f"AI sync of {r.name} failed: {exc}")
                     continue
@@ -498,17 +511,17 @@ class AiMethods:
     def after_sync_run(self) -> None:
         """Called when a sync run completes: the automatic AI fallback, when switched on."""
         if self.project is not None and self._settings().get("ai_fallback"):
-            self.ai_fallback()
+            self._fallback("auto")
 
     def with_ai_proposals(self, result: SyncResult) -> SyncResult:
-        """The automatic fallback's proposals, as placements for review, for clips audio could not place."""
-        if not self._settings().get("ai_fallback"):
-            return result
+        """The fallback's proposals, as placements for review, for clips audio could not place: the automatic
+        fallback's while it is switched on, and those of a fallback the user started."""
+        sources = ("auto", "fallback") if self._settings().get("ai_fallback") else ("fallback",)
         proposals = self._require_project().ai_analyses("sync")
         placements = dict(result.placements)
         for clip_id, a in proposals.items():
             res = a["result"]
-            if a["status"] != "proposed" or not res or res.get("source") != "auto" or not res["candidates"]:
+            if a["status"] != "proposed" or not res or res.get("source") not in sources or not res["candidates"]:
                 continue
             best = res["candidates"][0]
             key, anchor = str(clip_id), placements.get(str(best["anchor_clip_id"]))

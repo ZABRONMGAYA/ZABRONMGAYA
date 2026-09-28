@@ -24,6 +24,7 @@ import type {
 import { formatOffset } from "../lib/format";
 import { type View, anchorClip, clampView, fitView, offsetForStart, zoomAround } from "../features/timeline/geometry";
 import { forgetPeaks } from "../features/timeline/peaks";
+import { transcriptsChanged, useAnalyze } from "./analyze";
 import { useProd } from "./production";
 import { useThumbs } from "./thumbs";
 
@@ -112,6 +113,8 @@ export interface AppState {
   undo(): Promise<void>;
   redo(): Promise<void>;
   setReference(clipId: number | null): Promise<void>;
+  /** Show a timeline the engine returned from another request (AI sync accepted or rejected). */
+  adoptTimeline(timeline: Timeline): void;
 
   openExport(): void;
   closeExport(): void;
@@ -422,6 +425,7 @@ export const useApp = create<AppState>((set, get) => ({
         lastSync: null,
       });
       useProd.getState().reset(null);
+      useAnalyze.getState().reset();
     });
   },
 
@@ -573,6 +577,12 @@ export const useApp = create<AppState>((set, get) => ({
     );
   },
 
+  adoptTimeline(timeline) {
+    set({ timeline: showTimeline(timeline), matches: {} });
+    const selected = get().selected;
+    if (selected !== null) void get().loadMatches(selected);
+  },
+
   async setReference(clipId) {
     await flushMoves();
     await get().updateSettings({ reference_clip_id: clipId });
@@ -702,6 +712,7 @@ function afterOpen(project: ProjectSummary): void {
   useApp.getState().invalidatePeaks();
   useThumbs.getState().clear();
   useProd.getState().reset(project);
+  useAnalyze.getState().reset();
 }
 
 /** The window was reloaded (after a renderer crash, or Reload window), not opened. */
@@ -804,14 +815,39 @@ function handleEvent(event: EngineEvent): void {
         const review = result.timeline.review.length;
         app.toast("success", `Synchronised ${synced} of ${clips} clips${review ? `; ${review} to review` : ""}.`);
         void app.refresh().then(() => useApp.getState().fit());
+      } else if (event.params.kind === "ai-sync") {
+        void useAnalyze.getState().onAiJobDone(event.params.job_id, false);
+      } else if (event.params.kind === "model-download") {
+        app.toast("success", "Model downloaded: it works offline from now on.");
+        void useAnalyze.getState().loadStatus();
       }
       break;
     }
-    case "job.failed":
+    case "job.failed": {
       finishJob(event.params.job_id, event.params.cancelled ? "cancelled" : "failed");
-      if (event.params.cancelled) app.toast("info", `The ${event.params.kind} was cancelled.`);
-      else app.toast("error", `The ${event.params.kind} failed: ${event.params.error}`);
+      const what = JOB_LABELS[event.params.kind] ?? event.params.kind;
+      if (event.params.cancelled) app.toast("info", `${capitalise(what)} was cancelled.`);
+      else app.toast("error", `${capitalise(what)} failed: ${event.params.error}`);
+      if (event.params.kind === "ai-sync") void useAnalyze.getState().onAiJobDone(event.params.job_id, true);
+      if (event.params.kind === "model-download") void useAnalyze.getState().loadStatus();
       break;
+    }
+    case "transcript.updated":
+      transcriptsChanged(event.params.clip_ids);
+      break;
+    case "ai.fallback_done": {
+      const { clips, placed } = event.params;
+      if (clips)
+        app.toast(
+          placed ? "success" : "info",
+          placed
+            ? `AI sync proposed a place for ${placed} of ${clips} clip${clips === 1 ? "" : "s"} audio could not place: check them in Review.`
+            : `AI sync found no reliable place for the ${clips} clip${clips === 1 ? "" : "s"} audio could not place.`,
+        );
+      void app.refresh();
+      void useProd.getState().loadSummary();
+      break;
+    }
     case "media.imported":
       break;
     case "media.analyzed":
@@ -882,7 +918,30 @@ function runMenu(command: MenuCommand): void {
     case "settings":
       useProd.getState().openSettings();
       break;
+    case "search":
+      if (hasProject) openSearch();
+      break;
   }
+}
+
+/** S10 with the cursor in the search field (⌘K). */
+export function openSearch(): void {
+  useProd.getState().setStage("analyze");
+  useAnalyze.getState().setTab("search");
+  requestAnimationFrame(() => document.querySelector<HTMLInputElement>("[data-testid=moment-search]")?.focus());
+}
+
+const JOB_LABELS: Record<string, string> = {
+  import: "the import",
+  sync: "the sync",
+  "ai-sync": "the AI sync search",
+  "ai-fallback": "the AI fallback",
+  "model-download": "the model download",
+  rescan: "the rescan",
+};
+
+function capitalise(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 function isTyping(): boolean {

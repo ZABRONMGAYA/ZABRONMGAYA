@@ -1,6 +1,6 @@
 // S05 Analysis (live progress of the whole production, counts and rates only: no time estimates) and S08 Sync
 // results (categories, per-source table, review callout).
-import { CircleCheck, Download, ListX, Pause, Play, RotateCcw, TriangleAlert, X } from "lucide-react";
+import { CircleCheck, Download, ListX, Pause, Play, RotateCcw, ScanEye, TriangleAlert, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { bridge, call } from "../../api/client";
@@ -16,15 +16,18 @@ import {
   statusFor,
 } from "../../design-system/components";
 import { formatDuration } from "../../lib/format";
+import { useAnalyze } from "../../state/analyze";
 import { useProd } from "../../state/production";
 import { useApp } from "../../state/store";
 import { CATEGORY_LABEL, deviceLetters } from "../media/labels";
+import { AiSync } from "./AiSync";
 
 export function SyncScreen() {
   const view = useProd((s) => s.syncView);
   const pipeline = useProd((s) => s.pipeline);
   const summary = useProd((s) => s.summary);
   const running = pipeline?.sync !== null && pipeline?.sync !== undefined && pipeline.sync.phase !== "done";
+  const aiClip = useAnalyze((s) => s.aiClip);
   return (
     <div className="sy-sync" data-testid="sync-screen">
       <div className="sy-sync__tabs" role="tablist" aria-label="Sync views">
@@ -47,8 +50,19 @@ export function SyncScreen() {
         >
           Results
         </button>
+        {aiClip !== null && (
+          <button
+            type="button"
+            role="tab"
+            aria-selected={view === "ai"}
+            onClick={() => useProd.getState().setSyncView("ai")}
+            data-testid="sync-view-ai"
+          >
+            AI sync
+          </button>
+        )}
       </div>
-      {view === "results" && summary?.last_run ? <Results /> : <Analysis />}
+      {view === "ai" ? <AiSync /> : view === "results" && summary?.last_run ? <Results /> : <Analysis />}
     </div>
   );
 }
@@ -112,6 +126,15 @@ function Analysis() {
       unit: "searches",
     },
   ];
+  const speech = pipeline?.stages.transcribe;
+  if (speech && speech.done + speech.pending + speech.running + speech.failed + speech.skipped + speech.cancelled > 0)
+    stages.push({
+      key: "transcribe",
+      label: "Transcription",
+      desc: "Speech to text and voices, on this computer",
+      counts: speech,
+      unit: "parts",
+    });
   const failed = stages.reduce((n, s) => n + (s.counts?.failed ?? 0), 0);
   const title = paused
     ? "Paused"
@@ -257,7 +280,7 @@ function Queue({
   onErrors: () => void;
 }) {
   if (!pipeline) return null;
-  const kinds = ["probe", "analyze", "match", "extend"] as const;
+  const kinds = ["probe", "analyze", "match", "extend", "transcribe"] as const;
   const total = (k: keyof StageCounts) =>
     kinds.reduce((n, kind) => n + ((pipeline.stages[kind]?.[k] as number) ?? 0), 0);
   return (
@@ -266,7 +289,7 @@ function Queue({
         <Eyebrow>Job queue</Eyebrow>
         <span className="sy-muted">
           Workers: {pipeline.workers.probe} metadata · {pipeline.workers.analyze} audio · {pipeline.workers.match}{" "}
-          matching
+          matching{pipeline.workers.speech ? ` · ${pipeline.workers.speech} speech` : ""}
         </span>
       </div>
       <div className="sy-queue__counts tnum">
@@ -345,7 +368,13 @@ function Queue({
   );
 }
 
-const KIND_LABEL: Record<string, string> = { probe: "Metadata", analyze: "Audio", match: "Match", extend: "Extended" };
+const KIND_LABEL: Record<string, string> = {
+  probe: "Metadata",
+  analyze: "Audio",
+  match: "Match",
+  extend: "Extended",
+  transcribe: "Speech",
+};
 
 function SourceProgress() {
   const rows = useProd((s) => s.rows);
@@ -563,6 +592,36 @@ function Results() {
           <button type="button" className="sy-link" onClick={() => goto("review")}>
             Show clips
           </button>
+        </div>
+      )}
+
+      {c.manual + c.failed > 0 && (
+        <div className="sy-callout sy-callout--ai" role="note">
+          <ScanEye size={20} className="sy-banner__icon" aria-hidden />
+          <div>
+            <div className="sy-banner__title">
+              {(c.manual + c.failed).toLocaleString()} clip{c.manual + c.failed === 1 ? "" : "s"} could not be placed by
+              audio
+            </div>
+            <div className="sy-banner__body">
+              AI sync looks for them by what was said, flashes and light changes, and the camera clocks. Its proposals
+              are shown for review; nothing is locked automatically.
+            </div>
+          </div>
+          <Button
+            variant="secondary"
+            size="36"
+            icon={ScanEye}
+            onClick={() =>
+              void useApp.getState().run(async () => {
+                await call("ai.fallback", {});
+                useApp.getState().toast("info", "AI sync is looking for the clips audio could not place.");
+              })
+            }
+            data-testid="ai-fallback"
+          >
+            Find them with AI
+          </Button>
         </div>
       )}
 

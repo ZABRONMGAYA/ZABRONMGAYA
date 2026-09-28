@@ -24,6 +24,8 @@ export function StatusBar() {
   const tone = !ok || !ffmpeg ? "error" : offline > 0 ? "warn" : "ok";
 
   const running = pipeline?.running.length ?? 0;
+  // Background jobs outside the pipeline (AI sync, model downloads): the latest one's progress.
+  const job = useApp((s) => Object.values(s.jobs).find((j) => j.status === "running" && j.kind !== "sync"));
   return (
     <footer className="sy-statusbar" data-testid="statusbar">
       <span className="sy-statusbar__item">
@@ -33,6 +35,11 @@ export function StatusBar() {
       {pipeline && pipeline.state !== "idle" && (
         <span className="sy-statusbar__item">
           {pipeline.state === "paused" ? "Processing paused" : `Processing in background · ${running} running`}
+        </span>
+      )}
+      {job && (
+        <span className="sy-statusbar__item" data-testid="statusbar-job">
+          {job.message || "Working…"} · {Math.round(job.progress * 100)}%
         </span>
       )}
       {review > 0 && <span className="sy-statusbar__item sy-statusbar__item--warn">{review} need review</span>}

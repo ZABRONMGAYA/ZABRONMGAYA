@@ -24,16 +24,18 @@ const FORMATS: { value: ExportFormat; title: string; detail: string }[] = [
   },
 ];
 
-interface Settings {
+export interface ExportDefaults {
   format: ExportFormat;
   rate: string; // "" = automatic
   startTimecode: string;
   includeUncertain: boolean;
 }
 
+type Settings = ExportDefaults;
+
 const DEFAULTS: Settings = { format: "xmeml", rate: "", startTimecode: "01:00:00:00", includeUncertain: true };
 
-function loadSettings(): Settings {
+export function loadSettings(): Settings {
   try {
     return { ...DEFAULTS, ...(JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? "{}") as Partial<Settings>) };
   } catch {
@@ -41,7 +43,7 @@ function loadSettings(): Settings {
   }
 }
 
-function saveSettings(settings: Settings): void {
+export function saveSettings(settings: Settings): void {
   try {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
   } catch {

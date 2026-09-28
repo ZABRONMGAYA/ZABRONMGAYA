@@ -2,6 +2,7 @@
 import type { ClipMatch, ClipSummary, TimelineClip } from "../../api/contract";
 import { formatDuration, formatOffset, formatTime, parseRate, rateLabel } from "../../lib/format";
 import { FLAG_LABELS, METHOD_LABELS, STATUS_LABELS, driftSummary } from "../../lib/labels";
+import { useAnalyze } from "../../state/analyze";
 import { findClip, useApp, usePick } from "../../state/store";
 import { anchorClip, frameDuration } from "../timeline/geometry";
 
@@ -121,7 +122,9 @@ export function Inspector() {
             {STATUS_LABELS[clip.status]}
           </span>
           <span>{METHOD_LABELS[clip.method]}</span>
-          {clip.method === "audio" && <span className="muted">{Math.round(clip.confidence * 100)}% confident</span>}
+          {(clip.method === "audio" || clip.method === "ai") && (
+            <span className="muted">{Math.round(clip.confidence * 100)}% confident</span>
+          )}
           {isAnchor && <span className="badge ref">REF</span>}
         </div>
       )}
@@ -181,6 +184,15 @@ export function Inspector() {
                 data-testid="confirm"
               >
                 Confirm position
+              </button>
+            )}
+            {!isAnchor && (!placed || clip?.status === "needs_review") && (
+              <button
+                onClick={() => void useAnalyze.getState().openAiSync(selected)}
+                title="Look for the clip's place from what was said, light changes and the camera clocks (⇧A)"
+                data-testid="find-with-ai"
+              >
+                Find with AI
               </button>
             )}
             {!isAnchor && (

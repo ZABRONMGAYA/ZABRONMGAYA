@@ -4,6 +4,7 @@
     mcsync probe FILE...               metadata as JSON (for bug reports about unusual files)
     mcsync sync PATH... [options]      import folders/files, synchronise, print the placements
     mcsync export PROJECT OUTPUT       write the synchronised timeline as XML (Premiere Pro, Resolve)
+    mcsync transcribe FILE [options]   what is said in a recording, with speakers (runs offline)
 
 ``sync`` uses the same service code as the desktop app, so a project it writes
 (``--project``) opens in the app with its matches, and running it again on a
@@ -50,6 +51,41 @@ def cmd_probe(args: argparse.Namespace) -> int:
 
     out = [media_info_to_dict(probe(path), include_raw=args.raw) for path in args.files]
     print(json.dumps(out if len(out) > 1 else out[0], indent=2))
+    return 0
+
+
+def cmd_transcribe(args: argparse.Namespace) -> int:
+    from mcsync.ai import speakers as voices
+    from mcsync.ai.models import ModelStore
+    from mcsync.ai.speech import Transcriber, chunks
+    from mcsync.media.cache import AnalysisCache
+    from mcsync.media.probe import probe
+    from mcsync.media.tools import find_tools
+
+    tools = find_tools()
+    info = probe(args.file, tools)
+    stream = info.primary_audio
+    if stream is None:
+        print(f"{args.file} has no sound", file=sys.stderr)
+        return 1
+    store = ModelStore(AnalysisCache(args.cache_dir).root / "models")
+    transcriber = Transcriber(store, args.model, args.language, threads=2)
+    known: list[voices.Speaker] = []
+    out = []
+    for start, end in chunks(info.duration_s):
+        utterances, events = transcriber.transcribe_range(tools, str(args.file), stream.index, None, stream.channels,
+                                                          start, end)  # fmt: skip
+        keys = voices.assign([u.fingerprint for u in utterances], known)
+        out += [{"start_s": round(u.start_s, 3), "end_s": round(u.end_s, 3), "speaker": key, "language": u.language,
+                 "text": u.text} for u, key in zip(utterances, keys, strict=True)]  # fmt: skip
+        out += [{"start_s": round(e.t_s, 3), "event": e.label} for e in events]
+    out.sort(key=lambda r: r["start_s"])
+    if args.json:
+        print(json.dumps(out, indent=2, ensure_ascii=False))
+    else:
+        for r in out:
+            what = f"[{r['event']}]" if "event" in r else f"{r['speaker'] or '—'}: {r['text']}"
+            print(f"{_fmt_time(r['start_s'])}  {what}")
     return 0
 
 
@@ -201,6 +237,13 @@ def main(argv: list[str] | None = None) -> int:
     e.add_argument("output", help="an .xml (FCP 7 XML) or .fcpxml file")
     _add_export_options(e)
     e.set_defaults(func=cmd_export)
+
+    t = sub.add_parser("transcribe", help="transcribe a recording on this computer (speech, speakers, sound events)")
+    t.add_argument("file")
+    t.add_argument("--model", default="whisper-base", help="speech model (whisper-tiny, -base, -small, -turbo)")
+    t.add_argument("--language", default="auto", help="language code (en, sw, fr…) or auto")
+    t.add_argument("--json", action="store_true", help="print the utterances as JSON")
+    t.set_defaults(func=cmd_transcribe)
 
     args = parser.parse_args(argv)
     return int(args.func(args))

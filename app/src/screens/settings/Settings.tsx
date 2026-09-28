@@ -1,31 +1,55 @@
-// S13 Settings: Synchronization (as designed), Performance (resources, workers), Storage (cache), About.
-import { X } from "lucide-react";
+// S13 Settings: Synchronization (as designed) and every other category in the same SettingRow layout.
+import { Download, Trash2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { call } from "../../api/client";
-import type { CacheInfo, SystemResources, WorkerPlan } from "../../api/contract";
-import { Button, Segmented, SettingRow, Toggle } from "../../design-system/components";
+import type { AiModel, CacheInfo, SystemResources, WorkerPlan } from "../../api/contract";
+import { Button, Segmented, Select, SettingRow, Toggle, shortcut } from "../../design-system/components";
+import {
+  loadSettings as loadExportDefaults,
+  saveSettings as saveExportDefaults,
+} from "../../features/export/ExportDialog";
+import { useAnalyze } from "../../state/analyze";
 import { type SettingsCategory, useProd } from "../../state/production";
 import { useApp } from "../../state/store";
 import { formatBytes } from "../media/labels";
 
 // DESIGN-OPEN: #10 only the Synchronization pane is drawn; the other panes follow its layout (DESIGN_DECISIONS.md D-10).
-const CATEGORIES: { id: SettingsCategory | null; label: string }[] = [
+const CATEGORIES: { id: SettingsCategory; label: string }[] = [
   { id: "general", label: "General" },
-  { id: null, label: "Appearance" },
+  { id: "appearance", label: "Appearance" },
   { id: "performance", label: "Performance" },
-  { id: null, label: "AI" },
-  { id: null, label: "Transcription" },
+  { id: "ai", label: "AI" },
+  { id: "transcription", label: "Transcription" },
   { id: "synchronization", label: "Synchronization" },
-  { id: null, label: "Media" },
-  { id: null, label: "Proxy" },
-  { id: null, label: "Export" },
-  { id: null, label: "Keyboard shortcuts" },
+  { id: "media", label: "Media" },
+  { id: "proxy", label: "Proxy" },
+  { id: "export", label: "Export" },
+  { id: "shortcuts", label: "Keyboard shortcuts" },
   { id: "storage", label: "Storage" },
-  { id: null, label: "Privacy" },
-  { id: null, label: "Updates" },
+  { id: "privacy", label: "Privacy" },
+  { id: "updates", label: "Updates" },
   { id: "about", label: "About" },
 ];
+
+export const THEME_KEY = "syncora.theme";
+export type Theme = "dark" | "light" | "system";
+
+export function savedTheme(): Theme {
+  try {
+    const t = localStorage.getItem(THEME_KEY);
+    return t === "light" || t === "system" ? t : "dark";
+  } catch {
+    return "dark";
+  }
+}
+
+/** Apply a theme to the window (the timeline keeps its dark canvas, as in editing applications). */
+export function applyTheme(theme: Theme): void {
+  const light =
+    theme === "light" || (theme === "system" && window.matchMedia?.("(prefers-color-scheme: light)").matches);
+  document.documentElement.dataset.theme = light ? "light" : "dark";
+}
 
 export const WORKERS_KEY = "syncora.workers";
 
@@ -58,10 +82,8 @@ export function Settings() {
             type="button"
             className="sy-settings__item"
             aria-current={c.id === category ? "page" : undefined}
-            disabled={c.id === null}
-            title={c.id === null ? "Not in this version of Syncora" : undefined}
-            onClick={() => c.id && useProd.getState().openSettings(c.id)}
-            data-testid={c.id ? `settings-${c.id}` : undefined}
+            onClick={() => useProd.getState().openSettings(c.id)}
+            data-testid={`settings-${c.id}`}
           >
             {c.label}
           </button>
@@ -81,6 +103,15 @@ export function Settings() {
         {category === "storage" && <StoragePane />}
         {category === "general" && <GeneralPane />}
         {category === "about" && <AboutPane />}
+        {category === "appearance" && <AppearancePane />}
+        {category === "ai" && <AiPane />}
+        {category === "transcription" && <TranscriptionPane />}
+        {category === "media" && <MediaPane />}
+        {category === "proxy" && <ProxyPane />}
+        {category === "export" && <ExportPane />}
+        {category === "shortcuts" && <ShortcutsPane />}
+        {category === "privacy" && <PrivacyPane />}
+        {category === "updates" && <UpdatesPane />}
       </main>
     </div>
   );
@@ -154,9 +185,9 @@ function SyncPane() {
       </SettingRow>
       <SettingRow
         title="AI visual + speech fallback"
-        description="Not included in this version: clips without an audio match go to an extended audio search, then to manual sync."
+        description="After each sync, clips audio could not place are looked for by what was said, flashes and light changes and the camera clocks. They are proposed as REVIEW, never locked automatically."
       >
-        <Toggle label="AI fallback" on={false} disabled onChange={() => undefined} />
+        <Toggle label="AI fallback" on={s.ai_fallback} onChange={(on) => void update({ ai_fallback: on })} />
       </SettingRow>
       <SettingRow
         title="Search window"
@@ -396,6 +427,441 @@ function AboutPane() {
         <dt>Icons</dt>
         <dd>Lucide (ISC licence)</dd>
       </div>
+    </>
+  );
+}
+
+function ModelRow({ model }: { model: AiModel }) {
+  const download = model.download;
+  const busy = Boolean(download && !download.error && !model.installed);
+  return (
+    <SettingRow
+      title={`${model.title} · ${model.detail}`}
+      description={
+        model.installed
+          ? model.location === "bundled"
+            ? "Included with Syncora."
+            : "Downloaded to this computer."
+          : download?.error
+            ? `Download failed: ${download.error}`
+            : `${formatBytes(model.download_bytes)} download, then it works offline.`
+      }
+    >
+      {model.installed ? (
+        model.bundled ? (
+          <span className="sy-ok">Installed</span>
+        ) : (
+          <Button
+            variant="ghost"
+            size="compact"
+            icon={Trash2}
+            onClick={() =>
+              void useApp.getState().run(async () => {
+                await call("ai.remove_model", { model_id: model.id });
+                await useAnalyze.getState().loadStatus();
+              })
+            }
+          >
+            Remove
+          </Button>
+        )
+      ) : (
+        <Button
+          variant="secondary"
+          size="compact"
+          icon={Download}
+          loading={busy}
+          loadingLabel={
+            download ? `${formatBytes(download.received)} of ${formatBytes(download.total)}` : "Downloading…"
+          }
+          onClick={() =>
+            void useApp.getState().run(async () => {
+              await call("ai.download_model", { model_id: model.id });
+              await useAnalyze.getState().loadStatus();
+            })
+          }
+          data-testid={`download-${model.id}`}
+        >
+          Download
+        </Button>
+      )}
+    </SettingRow>
+  );
+}
+
+function useAiStatus() {
+  const status = useAnalyze((s) => s.status);
+  useEffect(() => {
+    void useAnalyze.getState().loadStatus();
+    // Downloads report their progress through the status: refresh it while one runs.
+    const id = setInterval(() => {
+      const st = useAnalyze.getState().status;
+      if (st?.models.some((m) => m.download && !m.download.error && !m.installed))
+        void useAnalyze.getState().loadStatus();
+    }, 1000);
+    return () => clearInterval(id);
+  }, []);
+  return status;
+}
+
+function AiPane() {
+  const status = useAiStatus();
+  const project = useApp((s) => s.project);
+  const update = useApp((s) => s.updateSettings);
+  return (
+    <>
+      <PaneHead
+        title="AI"
+        sub="Transcription, speaker recognition, search and AI sync run on this computer. Nothing is uploaded."
+      />
+      <div className="sy-kv sy-settings__facts">
+        <dt>Speech engine</dt>
+        <dd>
+          {status ? (status.speech_engine ? "sherpa-onnx (ONNX Runtime), on the processor" : "not installed") : "…"}
+        </dd>
+        <dt>Status</dt>
+        <dd className={status?.ready ? "sy-ok" : "sy-warn"}>
+          {status ? (status.ready ? "Ready" : (status.problem ?? "No speech model installed")) : "…"}
+        </dd>
+      </div>
+      <SettingRow
+        title="AI visual + speech fallback"
+        description={
+          project
+            ? "After each sync, look for clips audio could not place from speech, light changes and camera clocks. Results are proposed for review."
+            : "Open a project to change this."
+        }
+      >
+        <Toggle
+          label="AI fallback"
+          on={project?.settings.ai_fallback ?? false}
+          disabled={!project}
+          onChange={(on) => void update({ ai_fallback: on })}
+        />
+      </SettingRow>
+      <h2 className="sy-settings__h2">Speech models</h2>
+      {status?.models
+        .filter((m) => m.kind === "speech")
+        .map((m) => (
+          <ModelRow key={m.id} model={m} />
+        ))}
+      <h2 className="sy-settings__h2">Helpers</h2>
+      {status?.models
+        .filter((m) => m.kind !== "speech")
+        .map((m) => (
+          <ModelRow key={m.id} model={m} />
+        ))}
+    </>
+  );
+}
+
+function TranscriptionPane() {
+  const status = useAiStatus();
+  const project = useApp((s) => s.project);
+  const update = useApp((s) => s.updateSettings);
+  if (!project) return <PaneHead title="Transcription" sub="Open a project to choose how it is transcribed." />;
+  const s = project.settings;
+  const speech = status?.models.filter((m) => m.kind === "speech") ?? [];
+  const chosen = speech.find((m) => m.id === s.transcription_model);
+  return (
+    <>
+      <PaneHead
+        title="Transcription"
+        sub={`How ${project.name} is transcribed. Changes apply to the next transcription; finished transcripts are kept.`}
+      />
+      <SettingRow
+        title="Speech model"
+        description={
+          chosen && !chosen.installed
+            ? `${chosen.title} is not on this computer yet: download it in Settings → AI.`
+            : "Larger models are more accurate and slower. Balanced suits most productions."
+        }
+      >
+        <Select
+          label="Speech model"
+          value={s.transcription_model}
+          width={320}
+          onChange={(v) => void update({ transcription_model: v })}
+          options={speech.map((m) => ({
+            value: m.id,
+            label: `${m.title} · ${m.detail}${m.installed ? "" : " (not downloaded)"}`,
+          }))}
+        />
+      </SettingRow>
+      <SettingRow
+        title="Language"
+        description="Auto detects the language of every sentence, for productions in several languages. Choose one when all speech is in it: it is faster and more accurate."
+      >
+        <Select
+          label="Language"
+          value={s.transcription_language}
+          width={220}
+          onChange={(v) => void update({ transcription_language: v })}
+          options={[
+            { value: "auto", label: "Auto detect" },
+            ...(status?.languages ?? []).map((l) => ({ value: l.code, label: l.name })),
+          ]}
+        />
+      </SettingRow>
+      <SettingRow
+        title="Speakers"
+        description="Voices are told apart by a voice fingerprint of every sentence longer than a second, across all recordings of the project."
+      >
+        <span className="sy-dim">Always on</span>
+      </SettingRow>
+      <SettingRow
+        title="Sound events"
+        description="Applause, music, laughter, cheering and singing heard while transcribing become markers."
+      >
+        <span className="sy-dim">Always on</span>
+      </SettingRow>
+      <SettingRow
+        title="Transcribe now"
+        description="Each moment once, from its clearest recording (audio recorders first)."
+      >
+        <Button
+          variant="secondary"
+          size="compact"
+          disabled={!status?.ready || !chosen?.installed}
+          onClick={() => {
+            useProd.getState().closeSettings();
+            useProd.getState().setStage("analyze");
+            useAnalyze.getState().setTab("overview");
+            void useAnalyze.getState().transcribe("smart");
+          }}
+        >
+          Transcribe project
+        </Button>
+      </SettingRow>
+    </>
+  );
+}
+
+function AppearancePane() {
+  const [theme, setTheme] = useState<Theme>(savedTheme);
+  return (
+    <>
+      <PaneHead title="Appearance" sub="Syncora is designed dark, for long sessions next to an editing application." />
+      <SettingRow
+        title="Theme"
+        description="Light swaps the interface colours; the timeline keeps its dark canvas so waveforms read the same."
+      >
+        <Segmented
+          label="Theme"
+          value={theme}
+          onChange={(t) => {
+            setTheme(t);
+            applyTheme(t);
+            try {
+              localStorage.setItem(THEME_KEY, t);
+            } catch {
+              // this session only
+            }
+          }}
+          options={[
+            { value: "dark", label: "Dark" },
+            { value: "light", label: "Light" },
+            { value: "system", label: "System" },
+          ]}
+        />
+      </SettingRow>
+    </>
+  );
+}
+
+function MediaPane() {
+  return (
+    <>
+      <PaneHead title="Media" sub="Syncora reads media where it is and never modifies, moves or deletes it." />
+      <SettingRow
+        title="Formats"
+        description="Everything FFmpeg reads: MP4, MOV, MXF, MTS/M2TS, AVI, MKV, WAV, BWF, MP3, AAC, FLAC and more, from cameras, phones, drones and recorders."
+      >
+        <span className="sy-dim">All included</span>
+      </SettingRow>
+      <SettingRow
+        title="RAW video"
+        description="RED (.R3D), Blackmagic RAW (.braw), Canon RAW (.crm), ARRIRAW and Nikon N-RAW need their maker's SDK. Syncora lists them with a note: sync their proxies or audio instead."
+      >
+        <span className="sy-dim">Listed, not decoded</span>
+      </SettingRow>
+      <SettingRow
+        title="Sidecar files"
+        description="Low-resolution previews (.LRF, .THM), peak files, LUTs and camera metadata are recognised and left out, so they never appear as failed media."
+      >
+        <span className="sy-dim">Left out</span>
+      </SettingRow>
+      <SettingRow
+        title="Duplicates"
+        description="The same file imported twice is left out; clips that only look alike (same name, time and length) are kept until you decide. Review them from the Media screen."
+      >
+        <Button
+          variant="secondary"
+          size="compact"
+          onClick={() => {
+            useProd.getState().closeSettings();
+            useProd.getState().openDialog("duplicates");
+          }}
+          disabled={!useApp.getState().project}
+        >
+          Review duplicates
+        </Button>
+      </SettingRow>
+    </>
+  );
+}
+
+function ProxyPane() {
+  return (
+    <>
+      <PaneHead
+        title="Proxy"
+        sub="Syncora never needs proxies: it analyses the audio of the original files and previews them directly."
+      />
+      <SettingRow
+        title="Analysis"
+        description="Audio is decoded once into a small analysis cache (see Storage). Original video is not transcoded."
+      >
+        <span className="sy-dim">From originals</span>
+      </SettingRow>
+      <SettingRow
+        title="Exported timelines"
+        description="Exports link to the original files, so your editing application can make its own proxies."
+      >
+        <span className="sy-dim">Originals</span>
+      </SettingRow>
+    </>
+  );
+}
+
+function ExportPane() {
+  const [defaults, setDefaults] = useState(loadExportDefaults);
+  const change = (patch: Partial<typeof defaults>) => {
+    const next = { ...defaults, ...patch };
+    setDefaults(next);
+    saveExportDefaults(next);
+  };
+  return (
+    <>
+      <PaneHead title="Export" sub="Defaults for Export XML (⌘E). Each export can still change them." />
+      <SettingRow
+        title="Format"
+        description="FCP 7 XML for Premiere Pro and DaVinci Resolve; FCPXML for Final Cut Pro and Resolve."
+      >
+        <Segmented
+          label="Default format"
+          value={defaults.format}
+          onChange={(format) => change({ format })}
+          options={[
+            { value: "xmeml", label: "FCP 7 XML" },
+            { value: "fcpxml", label: "FCPXML" },
+          ]}
+        />
+      </SettingRow>
+      <SettingRow title="Start timecode" description="Where the exported sequence starts.">
+        <input
+          className="sy-input sy-settings__tc"
+          value={defaults.startTimecode}
+          aria-label="Start timecode"
+          onChange={(e) => change({ startTimecode: e.target.value })}
+        />
+      </SettingRow>
+      <SettingRow
+        title="Include clips to review"
+        description="Clips below the review threshold are exported where Syncora placed them (on their own tracks); off leaves them out."
+      >
+        <Toggle
+          label="Include clips to review"
+          on={defaults.includeUncertain}
+          onChange={(on) => change({ includeUncertain: on })}
+        />
+      </SettingRow>
+    </>
+  );
+}
+
+const SHORTCUTS: [string, string][] = [
+  ["⌘1 … ⌘5", "Stages: Media, Sync, Analyze, Timeline, Export"],
+  ["⇧S", "Sync all"],
+  ["⌘.", "Pause or resume processing"],
+  ["⌘B", "Run in background (back to Media)"],
+  ["⌘K", "Search moments"],
+  ["⇧A", "AI sync for the selected clip"],
+  ["⌘↵", "Accept the AI sync proposal"],
+  ["⌥→", "Next AI sync candidate"],
+  ["Space", "Play or pause (transcript) · preview side by side (AI sync)"],
+  ["J K L", "Back 5 s · pause · play (transcript)"],
+  ["⇧↑ ⇧↓", "Previous / next transcript segment"],
+  ["M", "Add a marker at the playhead (transcript)"],
+  ["F2", "Rename the focused speaker"],
+  ["← →", "Nudge the selected clip by a frame"],
+  ["⌥← ⌥→", "Nudge the selected clip by a millisecond"],
+  ["⌘Z ⇧⌘Z", "Undo / redo a correction"],
+  ["⌘= ⌘- ⌘0", "Zoom in, out, to fit"],
+  ["⌘E", "Export XML"],
+  ["⌘I ⇧⌘I", "Import files / a folder"],
+  ["⌘,", "Settings"],
+];
+
+function ShortcutsPane() {
+  return (
+    <>
+      <PaneHead title="Keyboard shortcuts" sub="On Windows and Linux, ⌘ is Ctrl, ⌥ is Alt and ⇧ is Shift." />
+      <div className="sy-kv sy-settings__facts sy-settings__shortcuts">
+        {SHORTCUTS.map(([keys, what]) => (
+          <div key={keys} className="sy-settings__shortcut">
+            <dt className="sy-mono">{shortcut(keys)}</dt>
+            <dd>{what}</dd>
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
+function PrivacyPane() {
+  return (
+    <>
+      <PaneHead title="Privacy" sub="Your media, transcripts and projects stay on this computer." />
+      <SettingRow
+        title="Analysis and AI"
+        description="Audio analysis, transcription, speaker recognition, search and AI sync run locally with models shipped with Syncora."
+      >
+        <span className="sy-dim">On this computer</span>
+      </SettingRow>
+      <SettingRow
+        title="Network"
+        description="Syncora connects to the internet only when you download an additional speech model (from the sherpa-onnx releases on GitHub)."
+      >
+        <span className="sy-dim">Model downloads only</span>
+      </SettingRow>
+      <SettingRow title="Usage data" description="Syncora collects no analytics, telemetry or crash reports.">
+        <span className="sy-dim">None</span>
+      </SettingRow>
+    </>
+  );
+}
+
+function UpdatesPane() {
+  const hello = useApp((s) => s.engine.hello);
+  return (
+    <>
+      <PaneHead
+        title="Updates"
+        sub="New versions are published on the Syncora releases page, with installers for Windows and macOS."
+      />
+      <div className="sy-kv sy-settings__facts">
+        <dt>This version</dt>
+        <dd>{hello?.version ?? "…"}</dd>
+        <dt>Releases</dt>
+        <dd className="sy-mono">github.com/ZABRONMGAYA/ZABRONMGAYA/releases</dd>
+      </div>
+      <SettingRow
+        title="Installing an update"
+        description="Run the new installer over this one: projects, settings, downloaded models and the analysis cache are kept."
+      >
+        <span className="sy-dim">Manual</span>
+      </SettingRow>
     </>
   );
 }

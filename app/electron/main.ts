@@ -1,10 +1,11 @@
 // Electron main process: window, menus, dialogs, and the engine child process.
 // It holds no business logic: renderer calls go to the engine unchanged (allow-listed).
-import { existsSync, promises as fs } from "node:fs";
+import { createReadStream, existsSync, promises as fs } from "node:fs";
 import path from "node:path";
+import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 
-import { BrowserWindow, Menu, app, dialog, ipcMain, shell } from "electron";
+import { BrowserWindow, Menu, app, dialog, ipcMain, protocol, shell } from "electron";
 
 import {
   ENGINE_METHODS,
@@ -26,6 +27,17 @@ const EXPORT_FILTERS: Record<"xmeml" | "fcpxml", Electron.FileFilter> = {
 };
 // Files this session exported: the only ones the renderer may reveal in the file manager.
 const exported = new Set<string>();
+// Media files of the open project (as the engine listed them): the only files the player may stream.
+const playable = new Set<string>();
+const MEDIA_SCHEME = "syncora-media";
+
+// The player streams project media through its own scheme, with byte ranges so video can seek.
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: MEDIA_SCHEME,
+    privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true },
+  },
+]);
 
 if (process.env.MCSYNC_NO_SANDBOX === "1") {
   app.commandLine.appendSwitch("no-sandbox"); // CI containers running as root
@@ -210,6 +222,8 @@ function buildMenu(): void {
         { label: "Undo", accelerator: "CmdOrCtrl+Z", click: menuCommand("undo") },
         { label: "Redo", accelerator: "CmdOrCtrl+Shift+Z", click: menuCommand("redo") },
         { type: "separator" },
+        { label: "Search Moments…", accelerator: "CmdOrCtrl+K", click: menuCommand("search") },
+        { type: "separator" },
         { role: "cut" },
         { role: "copy" },
         { role: "paste" },
@@ -235,12 +249,90 @@ function buildMenu(): void {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
+/** Remember the media files the engine lists for the open project (the player may stream only those). */
+function rememberMedia(method: string, result: unknown): void {
+  if (method === "project.open" || method === "project.create" || method === "project.close") playable.clear();
+  if (method === "media.list") {
+    for (const c of (result as { clips: { path: string }[] }).clips) playable.add(path.resolve(c.path));
+  } else if (method === "media.index") {
+    const index = result as { columns: string[]; rows: unknown[][] };
+    const k = index.columns.indexOf("path");
+    if (k >= 0) for (const row of index.rows) if (typeof row[k] === "string") playable.add(path.resolve(row[k]));
+  }
+}
+
+const MEDIA_TYPES: Record<string, string> = {
+  ".mp4": "video/mp4",
+  ".m4v": "video/mp4",
+  ".mov": "video/quicktime",
+  ".mkv": "video/x-matroska",
+  ".webm": "video/webm",
+  ".avi": "video/x-msvideo",
+  ".mts": "video/mp2t",
+  ".m2ts": "video/mp2t",
+  ".ts": "video/mp2t",
+  ".wav": "audio/wav",
+  ".mp3": "audio/mpeg",
+  ".m4a": "audio/mp4",
+  ".aac": "audio/aac",
+  ".flac": "audio/flac",
+  ".ogg": "audio/ogg",
+  ".opus": "audio/ogg",
+};
+
+/** Stream a project media file, honouring the byte range the player asks for. */
+async function serveMedia(request: Request): Promise<Response> {
+  const file = path.resolve(decodeURIComponent(new URL(request.url).pathname.slice(1)));
+  if (!playable.has(file)) {
+    return new Response("not a media file of the open project", {
+      status: 403,
+      headers: { "Access-Control-Allow-Origin": "*" },
+    });
+  }
+  let size: number;
+  try {
+    size = (await fs.stat(file)).size;
+  } catch {
+    return new Response("offline", { status: 404 });
+  }
+  const type = MEDIA_TYPES[path.extname(file).toLowerCase()] ?? "application/octet-stream";
+  // The app's own pages load from file://; nothing else can reach this scheme.
+  const cors = { "Access-Control-Allow-Origin": "*", "Access-Control-Expose-Headers": "Content-Range, Content-Length" };
+  const body = (start: number, end: number) =>
+    Readable.toWeb(createReadStream(file, { start, end })) as unknown as ReadableStream<Uint8Array>;
+  const range = /^bytes=(\d*)-(\d*)$/.exec(request.headers.get("range") ?? "");
+  if (!range || size === 0) {
+    return new Response(size ? body(0, size - 1) : null, {
+      status: 200,
+      headers: { ...cors, "Content-Type": type, "Content-Length": String(size), "Accept-Ranges": "bytes" },
+    });
+  }
+  let start = range[1] ? Number(range[1]) : Math.max(0, size - Number(range[2] || 0));
+  let end = range[1] && range[2] ? Math.min(Number(range[2]), size - 1) : size - 1;
+  if (start >= size || start > end) {
+    return new Response(null, { status: 416, headers: { ...cors, "Content-Range": `bytes */${size}` } });
+  }
+  start = Math.max(0, start);
+  end = Math.max(start, end);
+  return new Response(body(start, end), {
+    status: 206,
+    headers: {
+      ...cors,
+      "Content-Type": type,
+      "Content-Length": String(end - start + 1),
+      "Content-Range": `bytes ${start}-${end}/${size}`,
+      "Accept-Ranges": "bytes",
+    },
+  });
+}
+
 function registerIpc(): void {
   ipcMain.handle("engine:invoke", async (_e, method: string, params: unknown): Promise<InvokeResponse<unknown>> => {
     if (!allowed.has(method)) return { ok: false, error: { code: -32601, message: `not allowed: ${method}` } };
     try {
       const result = await engine.request(method as Method, params ?? {});
       if (method === "export.xml") exported.add(path.resolve((result as { path: string }).path));
+      rememberMedia(method, result);
       return { ok: true, result };
     } catch (err) {
       const e = err instanceof RpcError ? err : new RpcError(-32603, String(err));
@@ -327,6 +419,7 @@ function registerIpc(): void {
 }
 
 app.whenReady().then(async () => {
+  protocol.handle(MEDIA_SCHEME, (request) => serveMedia(request));
   registerIpc();
   buildMenu();
   // The main window first (tests and the renderer address it as the app's first window), then the splash.

@@ -17,7 +17,21 @@ import { matches, parseQuery, rowsFromIndex } from "../lib/query";
 import { useApp } from "./store";
 
 export type Stage = "media" | "sync" | "analyze" | "timeline" | "export";
-export type SettingsCategory = "general" | "performance" | "synchronization" | "storage" | "about";
+export type SettingsCategory =
+  | "general"
+  | "appearance"
+  | "performance"
+  | "ai"
+  | "transcription"
+  | "synchronization"
+  | "media"
+  | "proxy"
+  | "export"
+  | "shortcuts"
+  | "storage"
+  | "privacy"
+  | "updates"
+  | "about";
 export type Bin =
   | "all"
   | "review"
@@ -30,7 +44,7 @@ export type Bin =
 
 export interface ProdState {
   stage: Stage;
-  syncView: "analysis" | "results";
+  syncView: "analysis" | "results" | "ai";
   mediaView: "grid" | "list";
   importing: boolean;
   settings: SettingsCategory | null;
@@ -50,7 +64,7 @@ export interface ProdState {
 
   reset(project: ProjectSummary | null): void;
   setStage(stage: Stage): void;
-  setSyncView(view: "analysis" | "results"): void;
+  setSyncView(view: "analysis" | "results" | "ai"): void;
   setMediaView(view: "grid" | "list"): void;
   setImporting(on: boolean): void;
   openSettings(category?: SettingsCategory): void;

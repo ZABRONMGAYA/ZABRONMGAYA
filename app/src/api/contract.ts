@@ -14,7 +14,8 @@ export type ReviewReason =
   | "uncertain"
   | "metadata_only"
   | "unsynced"
-  | "offline";
+  | "offline"
+  | "ai_proposal";
 
 export interface WorkerPlan {
   probe: number;
@@ -41,6 +42,12 @@ export interface ProjectSettings {
   use_creation_time: boolean;
   /** Below this confidence a placement is shown as REVIEW (default 0.85). */
   review_threshold: number;
+  /** Speech model for transcription (`ai.status` lists them). */
+  transcription_model: string;
+  /** Whisper language code, or "auto" to detect it per utterance. */
+  transcription_language: string;
+  /** After a sync, look for clips audio could not place from speech and light changes (placed as REVIEW). */
+  ai_fallback: boolean;
 }
 
 export type SyncPhase = "waiting" | "planning" | "matching" | "extending" | "solving" | "done";
@@ -74,7 +81,7 @@ export interface ProjectSummary {
   paused: boolean;
 }
 
-export type TaskKind = "probe" | "analyze" | "match" | "extend";
+export type TaskKind = "probe" | "analyze" | "match" | "extend" | "transcribe";
 export type TaskStatus = "pending" | "running" | "done" | "failed" | "skipped" | "cancelled";
 
 export type StageCounts = Record<TaskStatus, number> & { rate_per_min: number | null };
@@ -99,7 +106,7 @@ export interface PipelineStatus {
   sync: SyncState | null;
   aux: string | null;
   running: { kind: TaskKind; name: string; task_id: number; seconds: number }[];
-  workers: { probe: number; analyze: number; match: number };
+  workers: { probe: number; analyze: number; match: number; speech?: number };
   activity: ActivityLine[];
 }
 
@@ -348,7 +355,7 @@ export interface TimelineClip {
   group: number | null;
   track: number | null;
   status: PlacementStatus;
-  method: "reference" | "audio" | "timecode" | "metadata" | "chapter" | "manual" | "none";
+  method: "reference" | "audio" | "timecode" | "metadata" | "chapter" | "manual" | "ai" | "none";
   confidence: number;
   flags: string[];
   drift_ppm: number;
@@ -500,6 +507,139 @@ export interface Correction {
   undone_at: string | null;
 }
 
+// ------------------------------------------------------------------ AI: models, transcripts, speakers, search
+
+export interface AiModel {
+  id: string;
+  kind: "speech" | "vad" | "voice";
+  title: string;
+  detail: string;
+  download_bytes: number;
+  bundled: boolean;
+  installed: boolean;
+  location: "bundled" | "downloaded" | null;
+  download: { received: number; total: number; error: string | null } | null;
+}
+
+export interface AiStatus {
+  speech_engine: boolean;
+  /** Transcription can run (the engine and at least one speech model are installed). */
+  ready: boolean;
+  problem: string | null;
+  models: AiModel[];
+  default_model: string;
+  languages: { code: string; name: string }[];
+}
+
+export interface TranscriptSegment {
+  id: number;
+  clip_id: number;
+  chunk: number;
+  start_s: number;
+  end_s: number;
+  speaker: string | null;
+  speaker_name: string | null;
+  language: string | null;
+  text: string;
+  confidence: number | null;
+  /** The recording that heard it (another clip of the same moment when this clip was not transcribed itself). */
+  source_clip_id: number;
+}
+
+export interface TranscriptState {
+  clip_id: number;
+  model: string;
+  language: string;
+  chunks: number;
+  updated_at: string;
+}
+
+export interface Marker {
+  id: number;
+  clip_id: number;
+  t_s: number;
+  type: string;
+  label: string | null;
+  confidence: number | null;
+  /** user: added by hand · speech: a sound event heard while transcribing (applause, music…) · search. */
+  source: "user" | "speech" | "search" | string;
+  created_at: string | null;
+}
+
+export interface Transcript {
+  clip_id: number;
+  segments: TranscriptSegment[];
+  state: TranscriptState | null;
+  markers: Marker[];
+}
+
+export interface TranscriptClip {
+  clip_id: number;
+  name: string;
+  device_name: string | null;
+  chunks: number;
+  done: number;
+  failed: number;
+  status: "running" | "queued" | "failed" | "partial" | "done";
+  model: string;
+  language: string;
+}
+
+export interface TranscriptsOverview {
+  totals: { segments: number; clips: number; speech_s: number; speakers: number; languages: Record<string, number> };
+  clips: TranscriptClip[];
+}
+
+export interface Speaker {
+  key: string;
+  name: string | null;
+  utterances: number;
+  segments: number;
+  speech_s: number;
+}
+
+export interface SearchHit {
+  kind: "speech" | "speaker" | "marker" | "clip";
+  clip_id: number;
+  clip_name: string;
+  device_name: string | null;
+  t_s: number;
+  end_s: number | null;
+  text: string;
+  speaker: string | null;
+  speaker_name: string | null;
+  language: string | null;
+  matched_by: string[];
+  score: number;
+  marker_id?: number;
+}
+
+export type EvidenceLane = "speech" | "visual" | "audio" | "metadata";
+
+export interface AiCandidate {
+  anchor_clip_id: number;
+  group: number;
+  /** The clip's start minus the anchor's start, seconds. */
+  offset_s: number;
+  start_s: number;
+  confidence: number;
+  evidence: { lane: EvidenceLane; score: number; note: string }[];
+  /** 48 heat cells per lane: 0 none, 1 weak, 2 partial, 3 strong. */
+  lanes: Partial<Record<EvidenceLane, number[]>>;
+}
+
+export interface AiSyncResult {
+  clip_id: number;
+  source: "user" | "auto" | "fallback";
+  duration_s: number;
+  reason: string;
+  searched: { speech_s: number; sentences: number; against: number };
+  candidates: AiCandidate[];
+  /** How many times stronger the best candidate is than the next (null with one candidate). */
+  agreement: number | null;
+  status: "proposed" | "failed" | "accepted" | "rejected";
+}
+
 /** method → [params, result] */
 export interface EngineMethods {
   "engine.hello": [{ client?: string }, Hello];
@@ -571,6 +711,29 @@ export interface EngineMethods {
   "export.xml": [ExportOptions, ExportReport];
   "job.cancel": [{ job_id: string }, { cancelled: boolean }];
   "job.list": [Record<string, never>, JobSummary[]];
+  "ai.status": [Record<string, never>, AiStatus];
+  "ai.download_model": [{ model_id: string }, JobRef];
+  "ai.remove_model": [{ model_id: string }, { removed: boolean }];
+  "transcripts.start": [
+    { scope?: "smart" | "all" | "clips"; clip_ids?: number[]; redo?: boolean },
+    { clips: number; tasks: number },
+  ];
+  "transcripts.cancel": [{ clip_ids?: number[] }, { cancelled: number }];
+  "transcripts.overview": [Record<string, never>, TranscriptsOverview];
+  "transcript.get": [{ clip_id: number }, Transcript];
+  "speakers.list": [Record<string, never>, Speaker[]];
+  "speakers.rename": [{ key: string; name: string | null }, Speaker[]];
+  "speakers.merge": [{ keys: string[]; into: string }, Speaker[]];
+  "markers.list": [{ clip_id?: number }, Marker[]];
+  "markers.add": [{ clip_id: number; t_s: number; label?: string | null; source?: "user" | "search" }, Marker];
+  "markers.update": [{ marker_id: number; label: string | null }, { id: number; label: string | null }];
+  "markers.delete": [{ marker_id: number }, { deleted: number }];
+  "search.query": [{ text: string; limit?: number }, { query: string; results: SearchHit[] }];
+  "ai.sync": [{ clip_id: number }, JobRef];
+  "ai.sync_result": [{ clip_id: number }, AiSyncResult | null];
+  "ai.sync_accept": [{ clip_id: number; candidate?: number }, Timeline];
+  "ai.sync_reject": [{ clip_id: number }, Timeline];
+  "ai.fallback": [Record<string, never>, JobRef];
 }
 
 export type Method = keyof EngineMethods;
@@ -636,6 +799,26 @@ export const ENGINE_METHODS: readonly Method[] = [
   "export.xml",
   "job.cancel",
   "job.list",
+  "ai.status",
+  "ai.download_model",
+  "ai.remove_model",
+  "transcripts.start",
+  "transcripts.cancel",
+  "transcripts.overview",
+  "transcript.get",
+  "speakers.list",
+  "speakers.rename",
+  "speakers.merge",
+  "markers.list",
+  "markers.add",
+  "markers.update",
+  "markers.delete",
+  "search.query",
+  "ai.sync",
+  "ai.sync_result",
+  "ai.sync_accept",
+  "ai.sync_reject",
+  "ai.fallback",
 ];
 
 export type EngineState = "starting" | "ready" | "crashed" | "stopped";
@@ -660,6 +843,8 @@ export type EngineEvent =
       method: "pipeline.sync_finished";
       params: { run_id: number; status: "completed" | "cancelled" | "failed"; error?: string; timeline?: Timeline };
     }
+  | { method: "transcript.updated"; params: { clip_ids: number[] } }
+  | { method: "ai.fallback_done"; params: { clips: number; placed: number } }
   | { method: "engine.status"; params: EngineStatus }
   | { method: "menu"; params: { command: MenuCommand } };
 
@@ -676,7 +861,8 @@ export type MenuCommand =
   | "zoom-out"
   | "zoom-fit"
   | "export"
-  | "settings";
+  | "settings"
+  | "search";
 
 export interface RpcFailure {
   code: number;
@@ -708,6 +894,8 @@ export interface Bridge {
   pathForFile(file: File): string;
   /** A poster frame (PNG) from the engine's cache. */
   readThumbnail(path: string): Promise<Uint8Array>;
+  /** A URL the <video> element can stream a project's media file from (seekable). */
+  mediaUrl(path: string): string;
   /** Bytes [offset, offset + length) of a waveform file inside the analysis cache. */
   readPeaks(directory: string, file: string, offset: number, length: number): Promise<Uint8Array>;
   platform: string;

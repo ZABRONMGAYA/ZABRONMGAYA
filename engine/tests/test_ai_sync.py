@@ -130,6 +130,10 @@ def test_the_automatic_fallback_only_proposes_for_review(tmp_path):
         assert (p.start_s, p.method, p.status) == (12.0, PlacementMethod.AI, PlacementStatus.NEEDS_REVIEW)
         project.set_ai_status(cam, "sync", "rejected")  # type: ignore[union-attr]
         assert str(cam) not in svc.with_ai_proposals(base).placements
+        # A fallback the user started is shown for review even with the automatic fallback off.
+        svc.project_update_settings(ai_fallback=False)
+        project.set_ai_analysis(cam, "sync", {**proposal, "source": "fallback"}, 0.7, "proposed")  # type: ignore[union-attr]
+        assert svc.with_ai_proposals(base).placements[str(cam)].status == PlacementStatus.NEEDS_REVIEW
     finally:
         svc.close()
 
