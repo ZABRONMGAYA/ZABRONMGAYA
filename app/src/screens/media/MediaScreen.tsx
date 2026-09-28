@@ -23,6 +23,7 @@ import { bridge, call } from "../../api/client";
 import { Button, KeyHint, StatusSquare, SyncBadge, shortcut } from "../../design-system/components";
 import { formatDuration, formatTime } from "../../lib/format";
 import { gridLayout, scrollIntoView, useViewport, visibleRange } from "../../lib/virtual";
+import { useAnalyze } from "../../state/analyze";
 import { type Bin, useProd, visibleRows } from "../../state/production";
 import { useApp } from "../../state/store";
 import { useThumbs } from "../../state/thumbs";
@@ -765,8 +766,9 @@ function SelectionBar({ shown }: { shown: MediaRow[] }) {
       <Button
         variant="secondary"
         size="compact"
-        disabled
-        title="Transcription is not included in this version of Syncora"
+        onClick={() => void useAnalyze.getState().transcribe("clips", ids)}
+        title="Transcribe these clips on this computer (Analyze shows the transcripts)"
+        data-testid="bulk-transcribe"
       >
         Transcribe
       </Button>

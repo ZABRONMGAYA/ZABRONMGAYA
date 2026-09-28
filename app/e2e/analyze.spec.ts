@@ -223,13 +223,26 @@ test("places the camera by AI sync from what was said", async () => {
   await expect.poll(async () => (await startOf("C0001.MOV")) - (await startOf("ZOOM0001.WAV"))).toBeCloseTo(OFFSET, 1);
 });
 
+test("transcribes clips chosen in the media browser", async () => {
+  await page.getByTestId("stage-media").click();
+  await page.getByTestId("bin-clip-C0001.MOV").click();
+  await expect(page.getByTestId("selection-bar")).toContainText("1 selected");
+  await page.getByTestId("bulk-transcribe").click();
+  await expect(page.getByTestId("toast-info").last()).toContainText(/Transcribing 1 recording|transcribed already/);
+  await page.getByTestId("stage-analyze").click();
+  await page.getByTestId("analyze-tab-overview").click();
+  const clips = page.getByTestId("transcript-clips");
+  await expect(clips).toContainText("C0001.MOV", { timeout: 60_000 });
+  await expect(clips.getByText("Transcribed")).toHaveCount(2, { timeout: 240_000 });
+});
+
 test("the AI and transcription settings are live", async () => {
   await page.getByTestId("open-settings").click();
   await page.getByTestId("settings-ai").click();
   await expect(page.getByTestId("settings")).toContainText("Ready");
   await expect(page.getByRole("switch", { name: "AI fallback" })).toBeEnabled();
   await page.getByTestId("settings-transcription").click();
-  await expect(page.getByRole("combobox", { name: "Speech model" })).toBeVisible();
+  await expect(page.getByTestId("settings").getByRole("combobox", { name: "Speech model" })).toBeVisible();
   for (const pane of ["appearance", "media", "proxy", "export", "shortcuts", "privacy", "updates"]) {
     await page.getByTestId(`settings-${pane}`).click();
     await expect(page.locator(".sy-settings__h1")).toBeVisible();
