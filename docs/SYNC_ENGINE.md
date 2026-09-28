@@ -76,6 +76,9 @@ contours:
   millisecond); otherwise it is `no_correlation`.
 * **Narrow searches** (a window at most 10 s wide, as predicted by a calibrated clock, see §8.1) hold too few lags
   for a meaningful PSR: their best candidates go to the fine stage whatever their PSR, and the fine stage decides.
+* **Two passes (1.3):** a pair is first matched on the loudness contour with clear candidates only (PSR ≥ 5), as in
+  1.2; most pairs end there. Only when that gives no clear confident match are both contours and the weaker
+  candidates searched. On the 4,238-file production, searching both for every pair made matching 4.3× slower.
 
 ## 4. Fine stage: exactly where?
 
@@ -130,7 +133,8 @@ detection    = smoothstep(coarse PSR, 5, 10), or smoothstep(prominence, 15, 30) 
 overlap      = smoothstep(overlap_s, 3 s, 10 s)
 confidence   = verification × (0.7 + 0.3·detection) × (0.8 + 0.2·overlap)
                capped at 0.5 when ambiguous, or when the verified windows correlate below 0.1 (weak_correlation)
-               unless their peak prominence shows the same sound (≥ 15)
+               unless their peak prominence shows the same sound (≥ 15),
+               and capped at 0.5 when neither the coarse peak is clear (PSR < 5) nor the fine peak prominent (< 15)
 ```
 
 `confident` ≥ 0.7 > `uncertain` ≥ 0.35 > `no_match`.
@@ -148,6 +152,10 @@ match**. Findings from calibration:
   They were music sessions, where beats line up across unrelated moments: every window agreed, but the
   normalised correlation stayed at or below 0.14. Among the 22,294 correct confident matches, 99.9 % correlate at
   0.157 or above. Hence the `weak_correlation` cap: a match whose windows agree but barely correlate is uncertain.
+
+The last cap came from the 4,238-file production: with weaker candidates refined, three windows of a far camera
+agreed on a strong room reflection 34 ms after the direct sound (coarse PSR 4.8, prominence 10.6), and the match
+scored 0.70, confident. Agreeing windows are not evidence enough without a clear coarse or fine peak.
 
 Flags (stable identifiers the UI explains): `silent`, `silent_overlap`, `no_overlap`, `no_correlation`, `ambiguous`,
 `inconsistent_windows`, `unverified`, `short_overlap`, `drift`, `clock_mismatch`, `weak_correlation`, and at
@@ -332,8 +340,8 @@ Measured on 4 cores (false match: reported synchronized or high confidence but m
 
 In the hard scenario, the 17 gimbal clips left for review are the 12 muted clips (placed by the calibrated camera
 clock, within 0.5 s), 2 clips whose sound the matcher cannot single out (clock, within 0.5 s) and 3 exact audio
-matches whose confidence stays below the threshold (short overlaps). Sync time rose from 32 s to 55 s for the
-anchoring searches.
+matches whose confidence stays below the threshold (short overlaps). Synchronisation takes 49 s (hard) and 37 s
+(standard) on 4 cores, against 32 s and 36 s with 1.2: the clock-anchoring searches.
 
 The 279-file two-session production of the end-to-end suite (`e2e/production.spec.ts`: clean, drifting, far,
 noisy and phone cameras, damaged files, duplicates, silent clips, clips without sound, footage of another event)

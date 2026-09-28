@@ -492,7 +492,7 @@ class Pipeline:
                         verify_pair, self.service._engine().options, ref, tgt, windows, t.detail.get("stage", "full")
                     )
                 except BrokenProcessPool:
-                    self.service.reset_match_pool()
+                    self.service.reset_match_pool(broken=True)
                     fut = self.service.match_pool().submit(
                         verify_pair, self.service._engine().options, ref, tgt, windows, t.detail.get("stage", "full")
                     )
@@ -765,7 +765,7 @@ class Pipeline:
                 if value.offset_s is not None and value.status != MatchStatus.NO_MATCH:
                     self._log("Match", f"{run.name} · {value.offset_s:+.3f} s · {value.confidence:.0%}")
             elif isinstance(exc, BrokenProcessPool):
-                self.service.reset_match_pool()
+                self.service.reset_match_pool(broken=True)
                 if t.attempts < MAX_ATTEMPTS:
                     release.append(t.id)
                 else:

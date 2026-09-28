@@ -28,7 +28,7 @@ import threading
 import time
 from collections import Counter, defaultdict
 from collections.abc import Callable
-from concurrent.futures import Executor, ThreadPoolExecutor
+from concurrent.futures import Executor, ProcessPoolExecutor, ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -119,6 +119,8 @@ class EngineService(AiMethods):
         self.jobs = JobManager(self.notify, log=self.log)
         self._pool: Executor | None = None
         self._pool_lock = threading.Lock()
+        #: Matcher processes allowed after a pool broke while working (halved each time; None: the plan's count).
+        self._pool_cap: int | None = None
         self._tools: FFmpegTools | None = None
         self._thumbs = ThreadPoolExecutor(2, thread_name_prefix="thumbnail")
         self._thumbs_busy: set[str] = set()
@@ -204,12 +206,17 @@ class EngineService(AiMethods):
         """Processes that match audio (one thread in-process when a single worker is configured)."""
         with self._pool_lock:
             if self._pool is None:
-                n = self.match_workers
+                n = min(self.match_workers, self._pool_cap or self.match_workers)
                 self._pool = ThreadPoolExecutor(1, thread_name_prefix="match") if n <= 1 else create_match_pool(n)
             return self._pool
 
-    def reset_match_pool(self) -> None:
+    def reset_match_pool(self, broken: bool = False) -> None:
+        """Stop the matcher processes (a new pool starts on the next match). ``broken``: a process of the pool
+        stopped while working (out of memory, or the system refused the process): the next pool has half as many."""
         with self._pool_lock:
+            if broken and isinstance(self._pool, ProcessPoolExecutor):
+                self._pool_cap = max(1, self._pool._max_workers // 2)  # noqa: SLF001
+                self.log(f"matcher processes stopped; continuing with {self._pool_cap}")
             if self._pool is not None:
                 self._pool.shutdown(wait=False, cancel_futures=True)
                 self._pool = None
@@ -279,6 +286,7 @@ class EngineService(AiMethods):
             else:
                 raise RpcError(APP_ERROR, "workers must be 'auto' or an object")
             if plan.match != self.plan.match:
+                self._pool_cap = None
                 self.reset_match_pool()
             self.plan = plan
             if self.pipeline is not None:

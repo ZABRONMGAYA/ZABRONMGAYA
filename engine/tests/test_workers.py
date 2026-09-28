@@ -107,12 +107,50 @@ def test_thousands_of_jobs_run_on_a_bounded_pool():
 
 @pytest.mark.skipif(sys.platform != "win32", reason="the 61-process limit is Windows's")
 def test_a_pool_asked_for_more_than_61_matchers_starts_on_windows():
-    """On Windows, ProcessPoolExecutor(max_workers=64) raises "max_workers must be <= 61"; the engine's pool caps."""
+    """On Windows, ProcessPoolExecutor(max_workers=64) raises "max_workers must be <= 61"; the engine's pool caps.
+    A pool that large on a small runner can lose a process while working (WinError 6); the service then goes on
+    with half as many (``reset_match_pool(broken=True)``), which is what this does."""
+    from concurrent.futures.process import BrokenProcessPool
+
     from mcsync.sync.engine import create_match_pool
 
-    pool = create_match_pool(64)
+    workers = 64
+    for _attempt in range(4):
+        pool = create_match_pool(workers)
+        try:
+            assert pool._max_workers <= 61  # noqa: SLF001
+            assert list(pool.map(sum, [[1, 2]] * 200)) == [3] * 200
+            return
+        except BrokenProcessPool:
+            workers = max(1, pool._max_workers // 2)  # noqa: SLF001
+        finally:
+            pool.shutdown(cancel_futures=True)
+    pytest.fail("no matcher pool could work")
+
+
+def test_a_broken_pool_is_replaced_by_a_smaller_one(tmp_path, monkeypatch):
+    from mcsync.service import app as app_module
+
+    started: list[int] = []
+
+    class FakePool(ProcessPoolExecutor):
+        def __init__(self, n: int) -> None:
+            self._max_workers = n
+            started.append(n)
+
+        def shutdown(self, wait: bool = True, *, cancel_futures: bool = False) -> None:
+            pass
+
+    monkeypatch.setattr(app_module, "create_match_pool", lambda n: FakePool(n))
+    svc = EngineService(cache_dir=str(tmp_path / "cache"), workers=8)
     try:
-        assert pool._max_workers == 61  # noqa: SLF001
-        assert pool.submit(sum, [1, 2]).result() == 3
+        svc.match_pool()
+        svc.reset_match_pool(broken=True)
+        svc.match_pool()
+        svc.reset_match_pool(broken=True)
+        svc.match_pool()
+        svc.reset_match_pool()  # an ordinary reset keeps the reduced count
+        svc.match_pool()
+        assert started == [8, 4, 2, 2]
     finally:
-        pool.shutdown()
+        svc.close()
